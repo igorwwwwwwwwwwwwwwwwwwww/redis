@@ -598,11 +598,6 @@ struct redisMemOverhead *getMemoryOverheadData(void) {
         mh->db[mh->num_dbs].overhead_ht_main = mem;
         mem_total+=mem;
 
-        mem = dictSize(db->expires) * sizeof(dictEntry) +
-              dictSlots(db->expires) * sizeof(dictEntry*);
-        mh->db[mh->num_dbs].overhead_ht_expires = mem;
-        mem_total+=mem;
-
         mh->num_dbs++;
     }
 

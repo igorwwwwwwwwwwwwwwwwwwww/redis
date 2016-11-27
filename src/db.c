@@ -78,8 +78,7 @@ robj *lookupKeyRead(redisDb *db, robj *key) {
     return lookupKeyReadWithFlags(db,key);
 }
 
-/* Lookup a key for write operations, and as a side effect, if needed, expires
- * the key if its TTL is reached.
+/* Lookup a key for write operations.
  *
  * Returns the linked value object if the key exists or NULL if the key
  * does not exist in the specified DB. */
@@ -143,9 +142,6 @@ int dbExists(redisDb *db, robj *key) {
 
 /* Delete a key, value, and associated expiration entry if any, from the DB */
 int dbSyncDelete(redisDb *db, robj *key) {
-    /* Deleting an entry from the expires dict will not free the sds of
-     * the key, because it is shared with the main dictionary. */
-    if (dictSize(db->expires) > 0) dictDelete(db->expires,key->ptr);
     if (dictDelete(db->dict,key->ptr) == DICT_OK) {
         return 1;
     } else {
@@ -220,7 +216,6 @@ long long emptyDb(int dbnum, void(callback)(void*)) {
         if (dbnum != -1 && dbnum != j) continue;
         removed += dictSize(server.db[j].dict);
         dictEmpty(server.db[j].dict,callback);
-        dictEmpty(server.db[j].expires,callback);
     }
     return removed;
 }

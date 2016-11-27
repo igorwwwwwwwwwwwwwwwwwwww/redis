@@ -352,7 +352,6 @@ struct evictionPoolEntry; /* Defined in evict.c */
  * database. The database number is the 'id' field in the structure. */
 typedef struct redisDb {
     dict *dict;                 /* The keyspace for this DB */
-    dict *expires;              /* Timeout of keys with a timeout set */
     dict *ready_keys;           /* Blocked keys that received a PUSH */
     int id;                     /* Database ID */
     long long avg_ttl;          /* Average TTL, just for stats */
@@ -505,7 +504,6 @@ struct redisMemOverhead {
     struct {
         size_t dbid;
         size_t overhead_ht_main;
-        size_t overhead_ht_expires;
     } *db;
 };
 

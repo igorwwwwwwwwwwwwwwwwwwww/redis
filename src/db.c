@@ -1020,30 +1020,6 @@ long long getExpire(redisDb *db, robj *key) {
     return dictGetSignedIntegerVal(de);
 }
 
-/* Propagate expires into slaves and the AOF file.
- * When a key expires in the master, a DEL operation for this key is sent
- * to all the slaves and the AOF file if enabled.
- *
- * This way the key expiry is centralized in one place, and since both
- * AOF and the master->slave link guarantee operation ordering, everything
- * will be consistent even if we allow write operations against expiring
- * keys. */
-void propagateExpire(redisDb *db, robj *key, int lazy) {
-    robj *argv[2];
-
-    argv[0] = lazy ? shared.unlink : shared.del;
-    argv[1] = key;
-    incrRefCount(argv[0]);
-    incrRefCount(argv[1]);
-
-    if (server.aof_state != AOF_OFF)
-        feedAppendOnlyFile(server.delCommand,db->id,argv,2);
-    replicationFeedSlaves(server.slaves,db->id,argv,2);
-
-    decrRefCount(argv[0]);
-    decrRefCount(argv[1]);
-}
-
 int expireIfNeeded(redisDb *db, robj *key) {
     mstime_t when = getExpire(db,key);
     mstime_t now;
@@ -1069,7 +1045,6 @@ int expireIfNeeded(redisDb *db, robj *key) {
 
     /* Delete the key */
     server.stat_expiredkeys++;
-    propagateExpire(db,key,server.lazyfree_lazy_expire);
     notifyKeyspaceEvent(NOTIFY_EXPIRED,
         "expired",key,db->id);
     return server.lazyfree_lazy_expire ? dbAsyncDelete(db,key) :

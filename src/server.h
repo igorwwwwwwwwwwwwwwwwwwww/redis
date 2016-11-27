@@ -1359,35 +1359,6 @@ ssize_t syncWrite(int fd, char *ptr, ssize_t size, long long timeout);
 ssize_t syncRead(int fd, char *ptr, ssize_t size, long long timeout);
 ssize_t syncReadLine(int fd, char *ptr, ssize_t size, long long timeout);
 
-/* Replication */
-void replicationFeedSlaves(list *slaves, int dictid, robj **argv, int argc);
-void replicationFeedSlavesFromMasterStream(list *slaves, char *buf, size_t buflen);
-void replicationFeedMonitors(client *c, list *monitors, int dictid, robj **argv, int argc);
-void updateSlavesWaitingBgsave(int bgsaveerr, int type);
-void replicationCron(void);
-void replicationHandleMasterDisconnection(void);
-void replicationCacheMaster(client *c);
-void resizeReplicationBacklog(long long newsize);
-void replicationSetMaster(char *ip, int port);
-void replicationUnsetMaster(void);
-void refreshGoodSlavesCount(void);
-void replicationScriptCacheInit(void);
-void replicationScriptCacheFlush(void);
-void replicationScriptCacheAdd(sds sha1);
-int replicationScriptCacheExists(sds sha1);
-void processClientsWaitingReplicas(void);
-void unblockClientWaitingReplicas(client *c);
-int replicationCountAcksByOffset(long long offset);
-void replicationSendNewlineToMaster(void);
-long long replicationGetSlaveOffset(void);
-char *replicationGetSlaveName(client *c);
-long long getPsyncInitialOffset(void);
-int replicationSetupSlaveForFullResync(client *slave, long long offset);
-void changeReplicationId(void);
-void clearReplicationId2(void);
-void chopReplicationBacklog(void);
-void replicationCacheMasterUsingMyself(void);
-
 /* Generic persistence functions */
 void startLoading(FILE *fp);
 void loadingProgress(off_t pos);
@@ -1582,7 +1553,6 @@ int rewriteConfig(char *path);
 
 /* db.c -- Keyspace access API */
 int removeExpire(redisDb *db, robj *key);
-void propagateExpire(redisDb *db, robj *key, int lazy);
 int expireIfNeeded(redisDb *db, robj *key);
 long long getExpire(redisDb *db, robj *key);
 void setExpire(redisDb *db, robj *key, long long when);

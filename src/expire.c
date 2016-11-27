@@ -57,7 +57,6 @@ int activeExpireCycleTryExpire(redisDb *db, dictEntry *de, long long now) {
         sds key = dictGetKey(de);
         robj *keyobj = createStringObject(key,sdslen(key));
 
-        propagateExpire(db,keyobj,server.lazyfree_lazy_expire);
         if (server.lazyfree_lazy_expire)
             dbAsyncDelete(db,keyobj);
         else
@@ -351,4 +350,3 @@ void touchCommand(client *c) {
         if (lookupKeyRead(c->db,c->argv[j]) != NULL) touched++;
     addReplyLongLong(c,touched);
 }
-

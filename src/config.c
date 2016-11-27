@@ -171,7 +171,6 @@ void queueLoadModule(sds path, sds *argv, int argc) {
 void loadServerConfigFromString(char *config) {
     char *err = NULL;
     int linenum = 0, totlines, i;
-    int slaveof_linenum = 0;
     sds *lines;
 
     lines = sdssplitlen(config,strlen(config),"\n",1,&totlines);
@@ -333,50 +332,6 @@ void loadServerConfigFromString(char *config) {
             server.lfu_decay_time = atoi(argv[1]);
             if (server.maxmemory_samples < 1) {
                 err = "lfu-decay-time must be 0 or greater";
-                goto loaderr;
-            }
-        } else if (!strcasecmp(argv[0],"slaveof") && argc == 3) {
-            slaveof_linenum = linenum;
-            server.masterhost = sdsnew(argv[1]);
-            server.masterport = atoi(argv[2]);
-            server.repl_state = REPL_STATE_CONNECT;
-        } else if (!strcasecmp(argv[0],"repl-ping-slave-period") && argc == 2) {
-            server.repl_ping_slave_period = atoi(argv[1]);
-            if (server.repl_ping_slave_period <= 0) {
-                err = "repl-ping-slave-period must be 1 or greater";
-                goto loaderr;
-            }
-        } else if (!strcasecmp(argv[0],"repl-timeout") && argc == 2) {
-            server.repl_timeout = atoi(argv[1]);
-            if (server.repl_timeout <= 0) {
-                err = "repl-timeout must be 1 or greater";
-                goto loaderr;
-            }
-        } else if (!strcasecmp(argv[0],"repl-disable-tcp-nodelay") && argc==2) {
-            if ((server.repl_disable_tcp_nodelay = yesnotoi(argv[1])) == -1) {
-                err = "argument must be 'yes' or 'no'"; goto loaderr;
-            }
-        } else if (!strcasecmp(argv[0],"repl-diskless-sync") && argc==2) {
-            if ((server.repl_diskless_sync = yesnotoi(argv[1])) == -1) {
-                err = "argument must be 'yes' or 'no'"; goto loaderr;
-            }
-        } else if (!strcasecmp(argv[0],"repl-diskless-sync-delay") && argc==2) {
-            server.repl_diskless_sync_delay = atoi(argv[1]);
-            if (server.repl_diskless_sync_delay < 0) {
-                err = "repl-diskless-sync-delay can't be negative";
-                goto loaderr;
-            }
-        } else if (!strcasecmp(argv[0],"repl-backlog-size") && argc == 2) {
-            long long size = memtoll(argv[1],NULL);
-            if (size <= 0) {
-                err = "repl-backlog-size must be 1 or greater.";
-                goto loaderr;
-            }
-            resizeReplicationBacklog(size);
-        } else if (!strcasecmp(argv[0],"repl-backlog-ttl") && argc == 2) {
-            server.repl_backlog_time_limit = atoi(argv[1]);
-            if (server.repl_backlog_time_limit < 0) {
-                err = "repl-backlog-ttl can't be negative ";
                 goto loaderr;
             }
         } else if (!strcasecmp(argv[0],"masterauth") && argc == 2) {
@@ -942,24 +897,6 @@ void configSetCommand(client *c) {
     } config_set_numerical_field(
       "latency-monitor-threshold",server.latency_monitor_threshold,0,LLONG_MAX){
     } config_set_numerical_field(
-      "repl-ping-slave-period",server.repl_ping_slave_period,1,LLONG_MAX) {
-    } config_set_numerical_field(
-      "repl-timeout",server.repl_timeout,1,LLONG_MAX) {
-    } config_set_numerical_field(
-      "repl-backlog-ttl",server.repl_backlog_time_limit,0,LLONG_MAX) {
-    } config_set_numerical_field(
-      "repl-diskless-sync-delay",server.repl_diskless_sync_delay,0,LLONG_MAX) {
-    } config_set_numerical_field(
-      "slave-priority",server.slave_priority,0,LLONG_MAX) {
-    } config_set_numerical_field(
-      "slave-announce-port",server.slave_announce_port,0,65535) {
-    } config_set_numerical_field(
-      "min-slaves-to-write",server.repl_min_slaves_to_write,0,LLONG_MAX) {
-        refreshGoodSlavesCount();
-    } config_set_numerical_field(
-      "min-slaves-max-lag",server.repl_min_slaves_max_lag,0,LLONG_MAX) {
-        refreshGoodSlavesCount();
-    } config_set_numerical_field(
       "hz",server.hz,0,LLONG_MAX) {
         /* Hz is more an hint from the user, so we accept values out of range
          * but cap them to reasonable values. */
@@ -981,8 +918,6 @@ void configSetCommand(client *c) {
             }
             freeMemoryIfNeeded();
         }
-    } config_set_memory_field("repl-backlog-size",ll) {
-        resizeReplicationBacklog(ll);
 
     /* Enumeration fields.
      * config_set_enum_field(name,var,enum_var) */

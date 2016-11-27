@@ -906,17 +906,9 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     /* Clear the paused clients flag if needed. */
     clientsArePaused(); /* Don't check return value, just use the side effect.*/
 
-    /* Replication cron function -- used to reconnect to master,
-     * detect transfer failures, start background RDB transfers and so forth. */
-    run_with_period(1000) replicationCron();
-
     /* Start a scheduled BGSAVE if the corresponding flag is set. This is
      * useful when we are forced to postpone a BGSAVE because an AOF
-     * rewrite is in progress.
-     *
-     * Note: this code must be after the replicationCron() call above so
-     * make sure when refactoring this file to keep this order. This is useful
-     * because we want to give priority to RDB savings for replication. */
+     * rewrite is in progress. */
     if (server.rdb_child_pid == -1 && server.aof_child_pid == -1 &&
         server.rdb_bgsave_scheduled &&
         (server.unixtime-server.lastbgsave_try > CONFIG_BGSAVE_RETRY_DELAY ||
@@ -949,17 +941,11 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
         argv[0] = createStringObject("REPLCONF",8);
         argv[1] = createStringObject("GETACK",6);
         argv[2] = createStringObject("*",1); /* Not used argument. */
-        replicationFeedSlaves(server.slaves, server.slaveseldb, argv, 3);
         decrRefCount(argv[0]);
         decrRefCount(argv[1]);
         decrRefCount(argv[2]);
         server.get_ack_from_slaves = 0;
     }
-
-    /* Unblock all the clients blocked for synchronous replication
-     * in WAIT. */
-    if (listLength(server.clients_waiting_acks))
-        processClientsWaitingReplicas();
 
     /* Try to process pending commands for clients that were just unblocked. */
     if (listLength(server.unblocked_clients))
@@ -1071,8 +1057,6 @@ void initServerConfig(void) {
 
     getRandomHexChars(server.runid,CONFIG_RUN_ID_SIZE);
     server.runid[CONFIG_RUN_ID_SIZE] = '\0';
-    changeReplicationId();
-    clearReplicationId2();
     server.configfile = NULL;
     server.executable = NULL;
     server.hz = CONFIG_DEFAULT_HZ;
@@ -1621,7 +1605,6 @@ void initServer(void) {
         server.maxmemory_policy = MAXMEMORY_NO_EVICTION;
     }
 
-    replicationScriptCacheInit();
     slowlogInit();
     latencyMonitorInit();
     bioInit();
@@ -1761,8 +1744,6 @@ void propagate(struct redisCommand *cmd, int dbid, robj **argv, int argc,
 {
     if (server.aof_state != AOF_OFF && flags & PROPAGATE_AOF)
         feedAppendOnlyFile(cmd,dbid,argv,argc);
-    if (flags & PROPAGATE_REPL)
-        replicationFeedSlaves(server.slaves,dbid,argv,argc);
 }
 
 /* Used inside commands to schedule the propagation of additional commands
@@ -1858,15 +1839,6 @@ void preventCommandReplication(client *c) {
 void call(client *c, int flags) {
     long long dirty, start, duration;
     int client_old_flags = c->flags;
-
-    /* Sent the command to clients in MONITOR mode, only if the commands are
-     * not generated from reading an AOF. */
-    if (listLength(server.monitors) &&
-        !server.loading &&
-        !(c->cmd->flags & (CMD_SKIP_MONITOR|CMD_ADMIN)))
-    {
-        replicationFeedMonitors(c,server.monitors,c->db->id,c->argv,c->argc);
-    }
 
     /* Initialization: clear the flags that must be set by the command on
      * demand, and initialize the array for additional commands propagation. */
@@ -3087,10 +3059,6 @@ void loadDataFromDisk(void) {
             if (rsi.repl_id_is_set && rsi.repl_offset != -1) {
                 memcpy(server.replid,rsi.repl_id,sizeof(server.replid));
                 server.master_repl_offset = rsi.repl_offset;
-                /* If we are a slave, create a cached master from this
-                 * information, in order to allow partial resynchronizations
-                 * with masters. */
-                if (server.masterhost) replicationCacheMasterUsingMyself();
             }
         } else if (errno != ENOENT) {
             serverLog(LL_WARNING,"Fatal error loading the DB: %s. Exiting.",strerror(errno));

@@ -467,7 +467,6 @@ int freeMemoryIfNeeded(void) {
         if (bestkey) {
             db = server.db+bestdbid;
             robj *keyobj = createStringObject(bestkey,sdslen(bestkey));
-            propagateExpire(db,keyobj,server.lazyfree_lazy_eviction);
             /* We compute the amount of memory freed by db*Delete() alone.
              * It is possible that actually the memory needed to propagate
              * the DEL in AOF and replication link is greater than the one
@@ -521,4 +520,3 @@ cant_free:
     }
     return C_ERR;
 }
-

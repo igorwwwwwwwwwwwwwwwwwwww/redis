@@ -196,7 +196,6 @@ void setKey(redisDb *db, robj *key, robj *val) {
     }
     incrRefCount(val);
     removeExpire(db,key);
-    signalModifiedKey(db,key);
 }
 
 int dbExists(redisDb *db, robj *key) {
@@ -330,23 +329,6 @@ int selectDb(client *c, int id) {
 }
 
 /*-----------------------------------------------------------------------------
- * Hooks for key space changes.
- *
- * Every time a key in the database is modified the function
- * signalModifiedKey() is called.
- *
- * Every time a DB is flushed the function signalFlushDb() is called.
- *----------------------------------------------------------------------------*/
-
-void signalModifiedKey(redisDb *db, robj *key) {
-    touchWatchedKey(db,key);
-}
-
-void signalFlushedDb(int dbid) {
-    touchWatchedKeysOnFlush(dbid);
-}
-
-/*-----------------------------------------------------------------------------
  * Type agnostic commands operating on the key space
  *----------------------------------------------------------------------------*/
 
@@ -372,42 +354,6 @@ int getFlushCommandFlags(client *c, int *flags) {
     return C_OK;
 }
 
-/* FLUSHDB [ASYNC]
- *
- * Flushes the currently SELECTed Redis DB. */
-void flushdbCommand(client *c) {
-    int flags;
-
-    if (getFlushCommandFlags(c,&flags) == C_ERR) return;
-    signalFlushedDb(c->db->id);
-    server.dirty += emptyDb(c->db->id,flags,NULL);
-    addReply(c,shared.ok);
-}
-
-/* FLUSHALL [ASYNC]
- *
- * Flushes the whole server data set. */
-void flushallCommand(client *c) {
-    int flags;
-
-    if (getFlushCommandFlags(c,&flags) == C_ERR) return;
-    signalFlushedDb(-1);
-    server.dirty += emptyDb(-1,flags,NULL);
-    addReply(c,shared.ok);
-    if (server.rdb_child_pid != -1) {
-        kill(server.rdb_child_pid,SIGUSR1);
-        rdbRemoveTempFile(server.rdb_child_pid);
-    }
-    if (server.saveparamslen > 0) {
-        /* Normally rdbSave() will reset dirty, but we don't want this here
-         * as otherwise FLUSHALL will not be replicated nor put into the AOF. */
-        int saved_dirty = server.dirty;
-        rdbSave(server.rdb_filename,NULL);
-        server.dirty = saved_dirty;
-    }
-    server.dirty++;
-}
-
 /* This command implements DEL and LAZYDEL. */
 void delGenericCommand(client *c, int lazy) {
     int numdel = 0, j;
@@ -417,9 +363,6 @@ void delGenericCommand(client *c, int lazy) {
         int deleted  = lazy ? dbAsyncDelete(c->db,c->argv[j]) :
                               dbSyncDelete(c->db,c->argv[j]);
         if (deleted) {
-            signalModifiedKey(c->db,c->argv[j]);
-            notifyKeyspaceEvent(NOTIFY_GENERIC,
-                "del",c->argv[j],c->db->id);
             server.dirty++;
             numdel++;
         }
@@ -836,12 +779,6 @@ void renameGenericCommand(client *c, int nx) {
     dbAdd(c->db,c->argv[2],o);
     if (expire != -1) setExpire(c->db,c->argv[2],expire);
     dbDelete(c->db,c->argv[1]);
-    signalModifiedKey(c->db,c->argv[1]);
-    signalModifiedKey(c->db,c->argv[2]);
-    notifyKeyspaceEvent(NOTIFY_GENERIC,"rename_from",
-        c->argv[1],c->db->id);
-    notifyKeyspaceEvent(NOTIFY_GENERIC,"rename_to",
-        c->argv[2],c->db->id);
     server.dirty++;
     addReply(c,nx ? shared.cone : shared.ok);
 }
@@ -1017,8 +954,6 @@ int expireIfNeeded(redisDb *db, robj *key) {
 
     /* Delete the key */
     server.stat_expiredkeys++;
-    notifyKeyspaceEvent(NOTIFY_EXPIRED,
-        "expired",key,db->id);
     return server.lazyfree_lazy_expire ? dbAsyncDelete(db,key) :
                                          dbSyncDelete(db,key);
 }

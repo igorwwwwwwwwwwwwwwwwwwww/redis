@@ -10,39 +10,6 @@ size_t lazyfreeGetPendingObjectsCount(void) {
     return lazyfree_objects;
 }
 
-/* Return the amount of work needed in order to free an object.
- * The return value is not always the actual number of allocations the
- * object is compoesd of, but a number proportional to it.
- *
- * For strings the function always returns 1.
- *
- * For aggregated objects represented by hash tables or other data structures
- * the function just returns the number of elements the object is composed of.
- *
- * Objects composed of single allocations are always reported as having a
- * single item even if they are actaully logical composed of multiple
- * elements.
- *
- * For lists the funciton returns the number of elements in the quicklist
- * representing the list. */
-size_t lazyfreeGetFreeEffort(robj *obj) {
-    if (obj->type == OBJ_LIST) {
-        quicklist *ql = obj->ptr;
-        return ql->len;
-    } else if (obj->type == OBJ_SET && obj->encoding == OBJ_ENCODING_HT) {
-        dict *ht = obj->ptr;
-        return dictSize(ht);
-    } else if (obj->type == OBJ_ZSET && obj->encoding == OBJ_ENCODING_SKIPLIST){
-        zset *zs = obj->ptr;
-        return zs->zsl->length;
-    } else if (obj->type == OBJ_HASH && obj->encoding == OBJ_ENCODING_HT) {
-        dict *ht = obj->ptr;
-        return dictSize(ht);
-    } else {
-        return 1; /* Everything else is a single allocation. */
-    }
-}
-
 /* Delete a key, value, and associated expiration entry if any, from the DB.
  * If there are enough allocations to free the value object may be put into
  * a lazy free list instead of being freed synchronously. The lazy free list
@@ -59,7 +26,7 @@ int dbAsyncDelete(redisDb *db, robj *key) {
     dictEntry *de = dictUnlink(db->dict,key->ptr);
     if (de) {
         robj *val = dictGetVal(de);
-        size_t free_effort = lazyfreeGetFreeEffort(val);
+        size_t free_effort = 1;
 
         /* If releasing the object is too much work, let's put it into the
          * lazy free list. */
@@ -109,12 +76,4 @@ void lazyfreeFreeDatabaseFromBioThread(dict *ht1, dict *ht2) {
     dictRelease(ht1);
     dictRelease(ht2);
     atomicDecr(lazyfree_objects,numkeys,lazyfree_objects_mutex);
-}
-
-/* Release the skiplist mapping Redis Cluster keys to slots in the
- * lazyfree thread. */
-void lazyfreeFreeSlotsMapFromBioThread(zskiplist *sl) {
-    size_t len = sl->length;
-    zslFree(sl);
-    atomicDecr(lazyfree_objects,len,lazyfree_objects_mutex);
 }

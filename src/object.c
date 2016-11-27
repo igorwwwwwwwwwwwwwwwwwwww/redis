@@ -179,130 +179,10 @@ robj *dupStringObject(const robj *o) {
     }
 }
 
-robj *createQuicklistObject(void) {
-    quicklist *l = quicklistCreate();
-    robj *o = createObject(OBJ_LIST,l);
-    o->encoding = OBJ_ENCODING_QUICKLIST;
-    return o;
-}
-
-robj *createZiplistObject(void) {
-    unsigned char *zl = ziplistNew();
-    robj *o = createObject(OBJ_LIST,zl);
-    o->encoding = OBJ_ENCODING_ZIPLIST;
-    return o;
-}
-
-robj *createSetObject(void) {
-    dict *d = dictCreate(&setDictType,NULL);
-    robj *o = createObject(OBJ_SET,d);
-    o->encoding = OBJ_ENCODING_HT;
-    return o;
-}
-
-robj *createIntsetObject(void) {
-    intset *is = intsetNew();
-    robj *o = createObject(OBJ_SET,is);
-    o->encoding = OBJ_ENCODING_INTSET;
-    return o;
-}
-
-robj *createHashObject(void) {
-    unsigned char *zl = ziplistNew();
-    robj *o = createObject(OBJ_HASH, zl);
-    o->encoding = OBJ_ENCODING_ZIPLIST;
-    return o;
-}
-
-robj *createZsetObject(void) {
-    zset *zs = zmalloc(sizeof(*zs));
-    robj *o;
-
-    zs->dict = dictCreate(&zsetDictType,NULL);
-    zs->zsl = zslCreate();
-    o = createObject(OBJ_ZSET,zs);
-    o->encoding = OBJ_ENCODING_SKIPLIST;
-    return o;
-}
-
-robj *createZsetZiplistObject(void) {
-    unsigned char *zl = ziplistNew();
-    robj *o = createObject(OBJ_ZSET,zl);
-    o->encoding = OBJ_ENCODING_ZIPLIST;
-    return o;
-}
-
-robj *createModuleObject(moduleType *mt, void *value) {
-    moduleValue *mv = zmalloc(sizeof(*mv));
-    mv->type = mt;
-    mv->value = value;
-    return createObject(OBJ_MODULE,mv);
-}
-
 void freeStringObject(robj *o) {
     if (o->encoding == OBJ_ENCODING_RAW) {
         sdsfree(o->ptr);
     }
-}
-
-void freeListObject(robj *o) {
-    switch (o->encoding) {
-    case OBJ_ENCODING_QUICKLIST:
-        quicklistRelease(o->ptr);
-        break;
-    default:
-        serverPanic("Unknown list encoding type");
-    }
-}
-
-void freeSetObject(robj *o) {
-    switch (o->encoding) {
-    case OBJ_ENCODING_HT:
-        dictRelease((dict*) o->ptr);
-        break;
-    case OBJ_ENCODING_INTSET:
-        zfree(o->ptr);
-        break;
-    default:
-        serverPanic("Unknown set encoding type");
-    }
-}
-
-void freeZsetObject(robj *o) {
-    zset *zs;
-    switch (o->encoding) {
-    case OBJ_ENCODING_SKIPLIST:
-        zs = o->ptr;
-        dictRelease(zs->dict);
-        zslFree(zs->zsl);
-        zfree(zs);
-        break;
-    case OBJ_ENCODING_ZIPLIST:
-        zfree(o->ptr);
-        break;
-    default:
-        serverPanic("Unknown sorted set encoding");
-    }
-}
-
-void freeHashObject(robj *o) {
-    switch (o->encoding) {
-    case OBJ_ENCODING_HT:
-        dictRelease((dict*) o->ptr);
-        break;
-    case OBJ_ENCODING_ZIPLIST:
-        zfree(o->ptr);
-        break;
-    default:
-        serverPanic("Unknown hash encoding type");
-        break;
-    }
-}
-
-void freeModuleObject(robj *o) {
-    moduleValue *mv = o->ptr;
-    mv->type->free(mv->value);
-    zfree(mv);
 }
 
 void incrRefCount(robj *o) {
@@ -313,11 +193,6 @@ void decrRefCount(robj *o) {
     if (o->refcount == 1) {
         switch(o->type) {
         case OBJ_STRING: freeStringObject(o); break;
-        case OBJ_LIST: freeListObject(o); break;
-        case OBJ_SET: freeSetObject(o); break;
-        case OBJ_ZSET: freeZsetObject(o); break;
-        case OBJ_HASH: freeHashObject(o); break;
-        case OBJ_MODULE: freeModuleObject(o); break;
         default: serverPanic("Unknown object type"); break;
         }
         zfree(o);
@@ -694,104 +569,6 @@ char *strEncoding(int encoding) {
 
 /* =========================== Memory introspection ========================== */
 
-/* Returns the size in bytes consumed by the key's value in RAM.
- * Note that the returned value is just an approximation, especially in the
- * case of aggregated data types where only "sample_size" elements
- * are checked and averaged to estimate the total size. */
-#define OBJ_COMPUTE_SIZE_DEF_SAMPLES 5 /* Default sample size. */
-size_t objectComputeSize(robj *o, size_t sample_size) {
-    sds ele, ele2;
-    dict *d;
-    dictIterator *di;
-    struct dictEntry *de;
-    size_t asize = 0, elesize = 0, samples = 0;
-
-    if (o->type == OBJ_STRING) {
-        if(o->encoding == OBJ_ENCODING_INT) {
-            asize = sizeof(*o);
-        } else if(o->encoding == OBJ_ENCODING_RAW) {
-            asize = sdsAllocSize(o->ptr)+sizeof(*o);
-        } else if(o->encoding == OBJ_ENCODING_EMBSTR) {
-            asize = sdslen(o->ptr)+2+sizeof(*o);
-        } else {
-            serverPanic("Unknown string encoding");
-        }
-    } else if (o->type == OBJ_LIST) {
-        if (o->encoding == OBJ_ENCODING_QUICKLIST) {
-            quicklist *ql = o->ptr;
-            quicklistNode *node = ql->head;
-            asize = sizeof(*o)+sizeof(quicklist);
-            do {
-                elesize += sizeof(quicklistNode)+ziplistBlobLen(node->zl);
-                samples++;
-            } while ((node = node->next) && samples < sample_size);
-            asize += (double)elesize/samples*listTypeLength(o);
-        } else if (o->encoding == OBJ_ENCODING_ZIPLIST) {
-            asize = sizeof(*o)+ziplistBlobLen(o->ptr);
-        } else {
-            serverPanic("Unknown list encoding");
-        }
-    } else if (o->type == OBJ_SET) {
-        if (o->encoding == OBJ_ENCODING_HT) {
-            d = o->ptr;
-            di = dictGetIterator(d);
-            asize = sizeof(*o)+sizeof(dict)+(sizeof(struct dictEntry*)*dictSlots(d));
-            while((de = dictNext(di)) != NULL && samples < sample_size) {
-                ele = dictGetKey(de);
-                elesize += sizeof(struct dictEntry) + sdsAllocSize(ele);
-                samples++;
-            }
-            dictReleaseIterator(di);
-            if (samples) asize += (double)elesize/samples*dictSize(d);
-        } else if (o->encoding == OBJ_ENCODING_INTSET) {
-            intset *is = o->ptr;
-            asize = sizeof(*o)+sizeof(*is)+is->encoding*is->length;
-        } else {
-            serverPanic("Unknown set encoding");
-        }
-    } else if (o->type == OBJ_ZSET) {
-        if (o->encoding == OBJ_ENCODING_ZIPLIST) {
-            asize = sizeof(*o)+(ziplistBlobLen(o->ptr));
-        } else if (o->encoding == OBJ_ENCODING_SKIPLIST) {
-            d = ((zset*)o->ptr)->dict;
-            zskiplist *zsl = ((zset*)o->ptr)->zsl;
-            zskiplistNode *znode = zsl->header->level[0].forward;
-            asize = sizeof(*o)+sizeof(zset)+(sizeof(struct dictEntry*)*dictSlots(d));
-            while(znode != NULL && samples < sample_size) {
-                elesize += sdsAllocSize(znode->ele);
-                elesize += sizeof(struct dictEntry) + zmalloc_size(znode);
-                samples++;
-                znode = znode->level[0].forward;
-            }
-            if (samples) asize += (double)elesize/samples*dictSize(d);
-        } else {
-            serverPanic("Unknown sorted set encoding");
-        }
-    } else if (o->type == OBJ_HASH) {
-        if (o->encoding == OBJ_ENCODING_ZIPLIST) {
-            asize = sizeof(*o)+(ziplistBlobLen(o->ptr));
-        } else if (o->encoding == OBJ_ENCODING_HT) {
-            d = o->ptr;
-            di = dictGetIterator(d);
-            asize = sizeof(*o)+sizeof(dict)+(sizeof(struct dictEntry*)*dictSlots(d));
-            while((de = dictNext(di)) != NULL && samples < sample_size) {
-                ele = dictGetKey(de);
-                ele2 = dictGetVal(de);
-                elesize += sdsAllocSize(ele) + sdsAllocSize(ele2);
-                elesize += sizeof(struct dictEntry);
-                samples++;
-            }
-            dictReleaseIterator(di);
-            if (samples) asize += (double)elesize/samples*dictSize(d);
-        } else {
-            serverPanic("Unknown hash encoding");
-        }
-    } else {
-        serverPanic("Unknown object type");
-    }
-    return asize;
-}
-
 /* Release data obtained with getMemoryOverheadData(). */
 void freeMemoryOverheadData(struct redisMemOverhead *mh) {
     zfree(mh->db);
@@ -853,14 +630,6 @@ struct redisMemOverhead *getMemoryOverheadData(void) {
         }
     }
     mh->clients_normal = mem;
-    mem_total+=mem;
-
-    mem = 0;
-    if (server.aof_state != AOF_OFF) {
-        mem += sdslen(server.aof_buf);
-        mem += aofRewriteBufferSize();
-    }
-    mh->aof_buffer = mem;
     mem_total+=mem;
 
     for (j = 0; j < server.dbnum; j++) {

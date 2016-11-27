@@ -62,7 +62,6 @@ typedef long long mstime_t; /* millisecond time type. */
 #include "util.h"    /* Misc functions useful in many places */
 #include "latency.h" /* Latency monitor API */
 #include "sparkline.h" /* ASCII graphs API */
-#include "quicklist.h"
 
 /* Following includes allow test functions to be called from Redis main() */
 #include "zipmap.h"
@@ -793,26 +792,6 @@ struct redisMemOverhead {
     } *db;
 };
 
-/* This structure can be optionally passed to RDB save/load functions in
- * order to implement additional functionalities, by storing and loading
- * metadata to the RDB file.
- *
- * Currently the only use is to select a DB at load time, useful in
- * replication in order to make sure that chained slaves (slaves of slaves)
- * select the correct DB and are able to accept the stream coming from the
- * top-level master. */
-typedef struct rdbSaveInfo {
-    /* Used saving and loading. */
-    int repl_stream_db;  /* DB to select in server.master client. */
-
-    /* Used only loading. */
-    int repl_id_is_set;  /* True if repl_id field is set. */
-    char repl_id[CONFIG_RUN_ID_SIZE+1];     /* Replication ID. */
-    long long repl_offset;                  /* Replication offset. */
-} rdbSaveInfo;
-
-#define RDB_SAVE_INFO_INIT {-1,0,"000000000000000000000000000000",-1}
-
 /*-----------------------------------------------------------------------------
  * Global server state
  *----------------------------------------------------------------------------*/
@@ -1129,55 +1108,6 @@ struct redisFunctionSym {
     unsigned long pointer;
 };
 
-typedef struct _redisSortObject {
-    robj *obj;
-    union {
-        double score;
-        robj *cmpobj;
-    } u;
-} redisSortObject;
-
-typedef struct _redisSortOperation {
-    int type;
-    robj *pattern;
-} redisSortOperation;
-
-/* Structure to hold list iteration abstraction. */
-typedef struct {
-    robj *subject;
-    unsigned char encoding;
-    unsigned char direction; /* Iteration direction */
-    quicklistIter *iter;
-} listTypeIterator;
-
-/* Structure for an entry while iterating over a list. */
-typedef struct {
-    listTypeIterator *li;
-    quicklistEntry entry; /* Entry in quicklist */
-} listTypeEntry;
-
-/* Structure to hold set iteration abstraction. */
-typedef struct {
-    robj *subject;
-    int encoding;
-    int ii; /* intset iterator */
-    dictIterator *di;
-} setTypeIterator;
-
-/* Structure to hold hash iteration abstraction. Note that iteration over
- * hashes involves both fields and values. Because it is possible that
- * not both are required, store pointers in the iterator to avoid
- * unnecessary memory allocation for fields/values. */
-typedef struct {
-    robj *subject;
-    int encoding;
-
-    unsigned char *fptr, *vptr;
-
-    dictIterator *di;
-    dictEntry *de;
-} hashTypeIterator;
-
 #define OBJ_HASH_KEY 1
 #define OBJ_HASH_VALUE 2
 
@@ -1278,32 +1208,6 @@ void addReplyErrorFormat(client *c, const char *fmt, ...);
 void addReplyStatusFormat(client *c, const char *fmt, ...);
 #endif
 
-/* List data type */
-void listTypeTryConversion(robj *subject, robj *value);
-void listTypePush(robj *subject, robj *value, int where);
-robj *listTypePop(robj *subject, int where);
-unsigned long listTypeLength(const robj *subject);
-listTypeIterator *listTypeInitIterator(robj *subject, long index, unsigned char direction);
-void listTypeReleaseIterator(listTypeIterator *li);
-int listTypeNext(listTypeIterator *li, listTypeEntry *entry);
-robj *listTypeGet(listTypeEntry *entry);
-void listTypeInsert(listTypeEntry *entry, robj *value, int where);
-int listTypeEqual(listTypeEntry *entry, robj *o);
-void listTypeDelete(listTypeIterator *iter, listTypeEntry *entry);
-void listTypeConvert(robj *subject, int enc);
-void unblockClientWaitingData(client *c);
-void popGenericCommand(client *c, int where);
-
-/* MULTI/EXEC/WATCH... */
-void unwatchAllKeys(client *c);
-void initClientMultiState(client *c);
-void freeClientMultiState(client *c);
-void queueMultiCommand(client *c);
-void touchWatchedKey(redisDb *db, robj *key);
-void touchWatchedKeysOnFlush(int dbid);
-void discardTransaction(client *c);
-void flagTransaction(client *c);
-
 /* Redis object implementation */
 void decrRefCount(robj *o);
 void decrRefCountVoid(void *o);
@@ -1359,23 +1263,6 @@ ssize_t syncReadLine(int fd, char *ptr, ssize_t size, long long timeout);
 void startLoading(FILE *fp);
 void loadingProgress(off_t pos);
 void stopLoading(void);
-
-/* RDB persistence */
-#include "rdb.h"
-int rdbSaveRio(rio *rdb, int *error, int flags, rdbSaveInfo *rsi);
-
-/* AOF persistence */
-void flushAppendOnlyFile(int force);
-void feedAppendOnlyFile(int dictid, robj **argv, int argc);
-void aofRemoveTempFile(pid_t childpid);
-int rewriteAppendOnlyFileBackground(void);
-int loadAppendOnlyFile(char *filename);
-void stopAppendOnly(void);
-int startAppendOnly(void);
-void backgroundRewriteDoneHandler(int exitcode, int bysignal);
-void aofRewriteBufferReset(void);
-unsigned long aofRewriteBufferSize(void);
-ssize_t aofReadDiffFromParent(void);
 
 /* Child info */
 void openChildInfoPipe(void);
@@ -1486,57 +1373,6 @@ void freeMemoryOverheadData(struct redisMemOverhead *mh);
 #define RESTART_SERVER_CONFIG_REWRITE (1<<1) /* CONFIG REWRITE before restart.*/
 int restartServer(int flags, mstime_t delay);
 
-/* Set data type */
-robj *setTypeCreate(sds value);
-int setTypeAdd(robj *subject, sds value);
-int setTypeRemove(robj *subject, sds value);
-int setTypeIsMember(robj *subject, sds value);
-setTypeIterator *setTypeInitIterator(robj *subject);
-void setTypeReleaseIterator(setTypeIterator *si);
-int setTypeNext(setTypeIterator *si, sds *sdsele, int64_t *llele);
-sds setTypeNextObject(setTypeIterator *si);
-int setTypeRandomElement(robj *setobj, sds *sdsele, int64_t *llele);
-unsigned long setTypeRandomElements(robj *set, unsigned long count, robj *aux_set);
-unsigned long setTypeSize(const robj *subject);
-void setTypeConvert(robj *subject, int enc);
-
-/* Hash data type */
-#define HASH_SET_TAKE_FIELD (1<<0)
-#define HASH_SET_TAKE_VALUE (1<<1)
-#define HASH_SET_COPY 0
-
-void hashTypeConvert(robj *o, int enc);
-void hashTypeTryConversion(robj *subject, robj **argv, int start, int end);
-void hashTypeTryObjectEncoding(robj *subject, robj **o1, robj **o2);
-int hashTypeExists(robj *o, sds key);
-int hashTypeDelete(robj *o, sds key);
-unsigned long hashTypeLength(const robj *o);
-hashTypeIterator *hashTypeInitIterator(robj *subject);
-void hashTypeReleaseIterator(hashTypeIterator *hi);
-int hashTypeNext(hashTypeIterator *hi);
-void hashTypeCurrentFromZiplist(hashTypeIterator *hi, int what,
-                                unsigned char **vstr,
-                                unsigned int *vlen,
-                                long long *vll);
-sds hashTypeCurrentFromHashTable(hashTypeIterator *hi, int what);
-void hashTypeCurrentObject(hashTypeIterator *hi, int what, unsigned char **vstr, unsigned int *vlen, long long *vll);
-sds hashTypeCurrentObjectNewSds(hashTypeIterator *hi, int what);
-robj *hashTypeLookupWriteOrCreate(client *c, robj *key);
-robj *hashTypeGetValueObject(robj *o, sds field);
-int hashTypeSet(robj *o, sds field, sds value, int flags);
-
-/* Pub / Sub */
-int pubsubUnsubscribeAllChannels(client *c, int notify);
-int pubsubUnsubscribeAllPatterns(client *c, int notify);
-void freePubsubPattern(void *p);
-int listMatchPubsubPattern(void *a, void *b);
-int pubsubPublishMessage(robj *channel, robj *message);
-
-/* Keyspace events notification */
-void notifyKeyspaceEvent(int type, char *event, robj *key, int dbid);
-int keyspaceEventsStringToFlags(char *classes);
-sds keyspaceEventsFlagsToString(int flags);
-
 /* Configuration */
 void loadServerConfig(char *filename, char *options);
 void appendServerSaveParams(time_t seconds, int changes);
@@ -1572,7 +1408,6 @@ robj *dbUnshareStringValue(redisDb *db, robj *key, robj *o);
 long long emptyDb(int dbnum, int flags, void(callback)(void*));
 
 int selectDb(client *c, int id);
-void signalModifiedKey(redisDb *db, robj *key);
 void signalFlushedDb(int dbid);
 unsigned int getKeysInSlot(unsigned int hashslot, robj **keys, unsigned int count);
 unsigned int countKeysInSlot(unsigned int hashslot);
@@ -1594,27 +1429,6 @@ int *zunionInterGetKeys(struct redisCommand *cmd,robj **argv, int argc, int *num
 int *evalGetKeys(struct redisCommand *cmd, robj **argv, int argc, int *numkeys);
 int *sortGetKeys(struct redisCommand *cmd, robj **argv, int argc, int *numkeys);
 int *migrateGetKeys(struct redisCommand *cmd, robj **argv, int argc, int *numkeys);
-
-/* redis-check-rdb */
-int redis_check_rdb(char *rdbfilename);
-int redis_check_rdb_main(int argc, char **argv);
-
-/* Scripting */
-void scriptingInit(int setup);
-int ldbRemoveChild(pid_t pid);
-void ldbKillForkedSessions(void);
-int ldbPendingChildren(void);
-
-/* Blocked clients */
-void processUnblockedClients(void);
-void blockClient(client *c, int btype);
-void unblockClient(client *c);
-void replyToBlockedClientTimedOut(client *c);
-int getTimeoutFromObjectOrReply(client *c, robj *object, mstime_t *timeout, int unit);
-void disconnectAllBlockedClients(void);
-
-/* expire.c -- Handling of expired keys */
-void activeExpireCycle(int type);
 
 /* evict.c -- maxmemory handling and LRU eviction. */
 void evictionPoolAlloc(void);

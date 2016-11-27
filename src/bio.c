@@ -86,7 +86,6 @@ struct bio_job {
 void *bioProcessBackgroundJobs(void *arg);
 void lazyfreeFreeObjectFromBioThread(robj *o);
 void lazyfreeFreeDatabaseFromBioThread(dict *ht1, dict *ht2);
-void lazyfreeFreeSlotsMapFromBioThread(zskiplist *sl);
 
 /* Make sure we have enough stack to perform all the things we do in the
  * main thread. */
@@ -197,8 +196,6 @@ void *bioProcessBackgroundJobs(void *arg) {
                 lazyfreeFreeObjectFromBioThread(job->arg1);
             else if (job->arg2 && job->arg3)
                 lazyfreeFreeDatabaseFromBioThread(job->arg2,job->arg3);
-            else if (job->arg3)
-                lazyfreeFreeSlotsMapFromBioThread(job->arg3);
         } else {
             serverPanic("Wrong job type in bioProcessBackgroundJobs().");
         }

@@ -114,7 +114,6 @@ void mixObjectDigest(unsigned char *digest, robj *o) {
  * a different digest. */
 void computeDatasetDigest(unsigned char *final) {
     unsigned char digest[20];
-    char buf[128];
     dictIterator *di = NULL;
     dictEntry *de;
     int j;
@@ -154,91 +153,6 @@ void computeDatasetDigest(unsigned char *final) {
             /* Save the key and associated value */
             if (o->type == OBJ_STRING) {
                 mixObjectDigest(digest,o);
-            } else if (o->type == OBJ_LIST) {
-                listTypeIterator *li = listTypeInitIterator(o,0,LIST_TAIL);
-                listTypeEntry entry;
-                while(listTypeNext(li,&entry)) {
-                    robj *eleobj = listTypeGet(&entry);
-                    mixObjectDigest(digest,eleobj);
-                    decrRefCount(eleobj);
-                }
-                listTypeReleaseIterator(li);
-            } else if (o->type == OBJ_SET) {
-                setTypeIterator *si = setTypeInitIterator(o);
-                sds sdsele;
-                while((sdsele = setTypeNextObject(si)) != NULL) {
-                    xorDigest(digest,sdsele,sdslen(sdsele));
-                    sdsfree(sdsele);
-                }
-                setTypeReleaseIterator(si);
-            } else if (o->type == OBJ_ZSET) {
-                unsigned char eledigest[20];
-
-                if (o->encoding == OBJ_ENCODING_ZIPLIST) {
-                    unsigned char *zl = o->ptr;
-                    unsigned char *eptr, *sptr;
-                    unsigned char *vstr;
-                    unsigned int vlen;
-                    long long vll;
-                    double score;
-
-                    eptr = ziplistIndex(zl,0);
-                    serverAssert(eptr != NULL);
-                    sptr = ziplistNext(zl,eptr);
-                    serverAssert(sptr != NULL);
-
-                    while (eptr != NULL) {
-                        serverAssert(ziplistGet(eptr,&vstr,&vlen,&vll));
-                        score = zzlGetScore(sptr);
-
-                        memset(eledigest,0,20);
-                        if (vstr != NULL) {
-                            mixDigest(eledigest,vstr,vlen);
-                        } else {
-                            ll2string(buf,sizeof(buf),vll);
-                            mixDigest(eledigest,buf,strlen(buf));
-                        }
-
-                        snprintf(buf,sizeof(buf),"%.17g",score);
-                        mixDigest(eledigest,buf,strlen(buf));
-                        xorDigest(digest,eledigest,20);
-                        zzlNext(zl,&eptr,&sptr);
-                    }
-                } else if (o->encoding == OBJ_ENCODING_SKIPLIST) {
-                    zset *zs = o->ptr;
-                    dictIterator *di = dictGetIterator(zs->dict);
-                    dictEntry *de;
-
-                    while((de = dictNext(di)) != NULL) {
-                        sds sdsele = dictGetKey(de);
-                        double *score = dictGetVal(de);
-
-                        snprintf(buf,sizeof(buf),"%.17g",*score);
-                        memset(eledigest,0,20);
-                        mixDigest(eledigest,sdsele,sdslen(sdsele));
-                        mixDigest(eledigest,buf,strlen(buf));
-                        xorDigest(digest,eledigest,20);
-                    }
-                    dictReleaseIterator(di);
-                } else {
-                    serverPanic("Unknown sorted set encoding");
-                }
-            } else if (o->type == OBJ_HASH) {
-                hashTypeIterator *hi = hashTypeInitIterator(o);
-                while (hashTypeNext(hi) != C_ERR) {
-                    unsigned char eledigest[20];
-                    sds sdsele;
-
-                    memset(eledigest,0,20);
-                    sdsele = hashTypeCurrentObjectNewSds(hi,OBJ_HASH_KEY);
-                    mixDigest(eledigest,sdsele,sdslen(sdsele));
-                    sdsfree(sdsele);
-                    sdsele = hashTypeCurrentObjectNewSds(hi,OBJ_HASH_VALUE);
-                    mixDigest(eledigest,sdsele,sdslen(sdsele));
-                    sdsfree(sdsele);
-                    xorDigest(digest,eledigest,20);
-                }
-                hashTypeReleaseIterator(hi);
             } else {
                 serverPanic("Unknown object type");
             }
@@ -319,28 +233,6 @@ void debugCommand(client *c) {
     } else if (!strcasecmp(c->argv[1]->ptr,"assert")) {
         if (c->argc >= 3) c->argv[2] = tryObjectEncoding(c->argv[2]);
         serverAssertWithInfo(c,c->argv[0],1 == 2);
-    } else if (!strcasecmp(c->argv[1]->ptr,"reload")) {
-        if (rdbSave(server.rdb_filename,NULL) != C_OK) {
-            addReply(c,shared.err);
-            return;
-        }
-        emptyDb(-1,EMPTYDB_NO_FLAGS,NULL);
-        if (rdbLoad(server.rdb_filename,NULL) != C_OK) {
-            addReplyError(c,"Error trying to load the RDB dump");
-            return;
-        }
-        serverLog(LL_WARNING,"DB reloaded by DEBUG RELOAD");
-        addReply(c,shared.ok);
-    } else if (!strcasecmp(c->argv[1]->ptr,"loadaof")) {
-        if (server.aof_state == AOF_ON) flushAppendOnlyFile(1);
-        emptyDb(-1,EMPTYDB_NO_FLAGS,NULL);
-        if (loadAppendOnlyFile(server.aof_filename) != C_OK) {
-            addReply(c,shared.err);
-            return;
-        }
-        server.dirty = 0; /* Prevent AOF / replication */
-        serverLog(LL_WARNING,"Append Only File loaded by DEBUG LOADAOF");
-        addReply(c,shared.ok);
     } else if (!strcasecmp(c->argv[1]->ptr,"object") && c->argc == 3) {
         dictEntry *de;
         robj *val;
@@ -354,44 +246,12 @@ void debugCommand(client *c) {
         strenc = strEncoding(val->encoding);
 
         char extra[128] = {0};
-        if (val->encoding == OBJ_ENCODING_QUICKLIST) {
-            char *nextra = extra;
-            int remaining = sizeof(extra);
-            quicklist *ql = val->ptr;
-            /* Add number of quicklist nodes */
-            int used = snprintf(nextra, remaining, " ql_nodes:%u", ql->len);
-            nextra += used;
-            remaining -= used;
-            /* Add average quicklist fill factor */
-            double avg = (double)ql->count/ql->len;
-            used = snprintf(nextra, remaining, " ql_avg_node:%.2f", avg);
-            nextra += used;
-            remaining -= used;
-            /* Add quicklist fill level / max ziplist size */
-            used = snprintf(nextra, remaining, " ql_ziplist_max:%d", ql->fill);
-            nextra += used;
-            remaining -= used;
-            /* Add isCompressed? */
-            int compressed = ql->compress != 0;
-            used = snprintf(nextra, remaining, " ql_compressed:%d", compressed);
-            nextra += used;
-            remaining -= used;
-            /* Add total uncompressed size */
-            unsigned long sz = 0;
-            for (quicklistNode *node = ql->head; node; node = node->next) {
-                sz += node->sz;
-            }
-            used = snprintf(nextra, remaining, " ql_uncompressed_size:%lu", sz);
-            nextra += used;
-            remaining -= used;
-        }
-
         addReplyStatusFormat(c,
             "Value at:%p refcount:%d "
-            "encoding:%s serializedlength:%zu "
+            "encoding:%s "
             "lru:%d lru_seconds_idle:%llu%s",
             (void*)val, val->refcount,
-            strenc, rdbSavedObjectLen(val),
+            strenc,
             val->lru, estimateObjectIdleTime(val)/1000, extra);
     } else if (!strcasecmp(c->argv[1]->ptr,"sdslen") && c->argc == 3) {
         dictEntry *de;
@@ -438,7 +298,6 @@ void debugCommand(client *c) {
             snprintf(buf,sizeof(buf),"value:%lu",j);
             val = createStringObject(buf,strlen(buf));
             dbAdd(c->db,key,val);
-            signalModifiedKey(c->db,key);
             decrRefCount(key);
         }
         addReply(c,shared.ok);
@@ -561,16 +420,6 @@ void serverLogObjectDebugInfo(const robj *o) {
             serverLog(LL_WARNING,"Object raw string content: %s", repr);
             sdsfree(repr);
         }
-    } else if (o->type == OBJ_LIST) {
-        serverLog(LL_WARNING,"List length: %d", (int) listTypeLength(o));
-    } else if (o->type == OBJ_SET) {
-        serverLog(LL_WARNING,"Set size: %d", (int) setTypeSize(o));
-    } else if (o->type == OBJ_HASH) {
-        serverLog(LL_WARNING,"Hash size: %d", (int) hashTypeLength(o));
-    } else if (o->type == OBJ_ZSET) {
-        serverLog(LL_WARNING,"Sorted set size: %d", (int) zsetLength(o));
-        if (o->encoding == OBJ_ENCODING_SKIPLIST)
-            serverLog(LL_WARNING,"Skiplist level: %d", (int) ((const zset*)o->ptr)->zsl->level);
     }
 }
 

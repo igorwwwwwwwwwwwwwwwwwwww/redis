@@ -364,10 +364,6 @@ int freeMemoryIfNeeded(void) {
                 mem_used -= obuf_bytes;
         }
     }
-    if (server.aof_state != AOF_OFF) {
-        mem_used -= sdslen(server.aof_buf);
-        mem_used -= aofRewriteBufferSize();
-    }
 
     /* Check if we are still over the memory limit. */
     if (mem_used <= server.maxmemory) return C_OK;
@@ -487,8 +483,6 @@ int freeMemoryIfNeeded(void) {
             delta -= (long long) zmalloc_used_memory();
             mem_freed += delta;
             server.stat_evictedkeys++;
-            notifyKeyspaceEvent(NOTIFY_EVICTED, "evicted",
-                keyobj, db->id);
             decrRefCount(keyobj);
             keys_freed++;
 

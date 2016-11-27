@@ -556,14 +556,6 @@ void loadServerConfigFromString(char *config) {
             if (server.repl_min_slaves_max_lag < 0) {
                 err = "Invalid value for min-slaves-max-lag."; goto loaderr;
             }
-        } else if (!strcasecmp(argv[0],"notify-keyspace-events") && argc == 2) {
-            int flags = keyspaceEventsStringToFlags(argv[1]);
-
-            if (flags == -1) {
-                err = "Invalid event class character. Use 'g$lshzxeA'.";
-                goto loaderr;
-            }
-            server.notify_keyspace_events = flags;
         } else if (!strcasecmp(argv[0],"supervised") && argc == 2) {
             server.supervised_mode =
                 configEnumGetValue(supervised_mode_enum,argv[1]);
@@ -714,19 +706,6 @@ void configSetCommand(client *c) {
                 }
             }
         }
-    } config_set_special_field("appendonly") {
-        int enable = yesnotoi(o->ptr);
-
-        if (enable == -1) goto badfmt;
-        if (enable == 0 && server.aof_state != AOF_OFF) {
-            stopAppendOnly();
-        } else if (enable && server.aof_state == AOF_OFF) {
-            if (startAppendOnly() == C_ERR) {
-                addReplyError(c,
-                    "Unable to turn on AOF. Check server logs.");
-                return;
-            }
-        }
     } config_set_special_field("save") {
         int vlen, j;
         sds *v = sdssplitlen(o->ptr,sdslen(o->ptr)," ",1,&vlen);
@@ -812,14 +791,6 @@ void configSetCommand(client *c) {
             server.client_obuf_limits[class].soft_limit_seconds = soft_seconds;
         }
         sdsfreesplitres(v,vlen);
-    } config_set_special_field("notify-keyspace-events") {
-        int flags = keyspaceEventsStringToFlags(o->ptr);
-
-        if (flags == -1) goto badfmt;
-        server.notify_keyspace_events = flags;
-    } config_set_special_field("slave-announce-ip") {
-        zfree(server.slave_announce_ip);
-        server.slave_announce_ip = ((char*)o->ptr)[0] ? zstrdup(o->ptr) : NULL;
 
     /* Boolean fields.
      * config_set_bool_field(name,var). */
@@ -1149,15 +1120,6 @@ void configGetCommand(client *c) {
         addReplyBulkCString(c,buf);
         matches++;
     }
-    if (stringmatch(pattern,"notify-keyspace-events",1)) {
-        robj *flagsobj = createObject(OBJ_STRING,
-            keyspaceEventsFlagsToString(server.notify_keyspace_events));
-
-        addReplyBulkCString(c,"notify-keyspace-events");
-        addReplyBulk(c,flagsobj);
-        decrRefCount(flagsobj);
-        matches++;
-    }
     if (stringmatch(pattern,"bind",1)) {
         sds aux = sdsjoin(server.bindaddr,server.bindaddr_count," ");
 
@@ -1479,20 +1441,6 @@ void rewriteConfigDirOption(struct rewriteConfigState *state) {
     rewriteConfigStringOption(state,"dir",cwd,NULL);
 }
 
-/* Rewrite the notify-keyspace-events option. */
-void rewriteConfigNotifykeyspaceeventsOption(struct rewriteConfigState *state) {
-    int force = server.notify_keyspace_events != 0;
-    char *option = "notify-keyspace-events";
-    sds line, flags;
-
-    flags = keyspaceEventsFlagsToString(server.notify_keyspace_events);
-    line = sdsnew(option);
-    line = sdscatlen(line, " ", 1);
-    line = sdscatrepr(line, flags, sdslen(flags));
-    sdsfree(flags);
-    rewriteConfigRewriteLine(state,option,line,force);
-}
-
 /* Rewrite the client-output-buffer-limit option. */
 void rewriteConfigClientoutputbufferlimitOption(struct rewriteConfigState *state) {
     int j;
@@ -1731,7 +1679,6 @@ int rewriteConfig(char *path) {
     rewriteConfigNumericalOption(state,"slowlog-log-slower-than",server.slowlog_log_slower_than,CONFIG_DEFAULT_SLOWLOG_LOG_SLOWER_THAN);
     rewriteConfigNumericalOption(state,"latency-monitor-threshold",server.latency_monitor_threshold,CONFIG_DEFAULT_LATENCY_MONITOR_THRESHOLD);
     rewriteConfigNumericalOption(state,"slowlog-max-len",server.slowlog_max_len,CONFIG_DEFAULT_SLOWLOG_MAX_LEN);
-    rewriteConfigNotifykeyspaceeventsOption(state);
     rewriteConfigNumericalOption(state,"hash-max-ziplist-entries",server.hash_max_ziplist_entries,OBJ_HASH_MAX_ZIPLIST_ENTRIES);
     rewriteConfigNumericalOption(state,"hash-max-ziplist-value",server.hash_max_ziplist_value,OBJ_HASH_MAX_ZIPLIST_VALUE);
     rewriteConfigNumericalOption(state,"list-max-ziplist-size",server.list_max_ziplist_size,OBJ_LIST_MAX_ZIPLIST_SIZE);

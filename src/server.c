@@ -584,16 +584,6 @@ int clientsCronHandleTimeout(client *c, mstime_t now_ms) {
         serverLog(LL_VERBOSE,"Closing idle client");
         freeClient(c);
         return 1;
-    } else if (c->flags & CLIENT_BLOCKED) {
-        /* Blocked OPS timeout is handled with milliseconds resolution.
-         * However note that the actual resolution is limited by
-         * server.hz. */
-
-        if (c->bpop.timeout != 0 && c->bpop.timeout < now_ms) {
-            /* Handle blocking operation specific timeout. */
-            replyToBlockedClientTimedOut(c);
-            unblockClient(c);
-        }
     }
     return 0;
 }
@@ -663,11 +653,6 @@ void clientsCron(void) {
  * incrementally in Redis databases, such as active key expiring, resizing,
  * rehashing. */
 void databasesCron(void) {
-    /* Expire keys by random sampling. Not required for slaves
-     * as master will synthesize DELs for us. */
-    if (server.active_expire_enabled && server.masterhost == NULL)
-        activeExpireCycle(ACTIVE_EXPIRE_CYCLE_SLOW);
-
     /* Perform hash tables rehashing if needed, but only if there are no
      * other processes saving the DB on disk. Otherwise rehashing is bad
      * as will cause a lot of copy-on-write of memory pages. */
@@ -811,112 +796,11 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     /* Handle background operations on Redis databases. */
     databasesCron();
 
-    /* Start a scheduled AOF rewrite if this was requested by the user while
-     * a BGSAVE was in progress. */
-    if (server.rdb_child_pid == -1 && server.aof_child_pid == -1 &&
-        server.aof_rewrite_scheduled)
-    {
-        rewriteAppendOnlyFileBackground();
-    }
-
-    /* Check if a background saving or AOF rewrite in progress terminated. */
-    if (server.rdb_child_pid != -1 || server.aof_child_pid != -1)
-    {
-        int statloc;
-        pid_t pid;
-
-        if ((pid = wait3(&statloc,WNOHANG,NULL)) != 0) {
-            int exitcode = WEXITSTATUS(statloc);
-            int bysignal = 0;
-
-            if (WIFSIGNALED(statloc)) bysignal = WTERMSIG(statloc);
-
-            if (pid == -1) {
-                serverLog(LL_WARNING,"wait3() returned an error: %s. "
-                    "rdb_child_pid = %d, aof_child_pid = %d",
-                    strerror(errno),
-                    (int) server.rdb_child_pid,
-                    (int) server.aof_child_pid);
-            } else if (pid == server.rdb_child_pid) {
-                backgroundSaveDoneHandler(exitcode,bysignal);
-                if (!bysignal && exitcode == 0) receiveChildInfo();
-            } else if (pid == server.aof_child_pid) {
-                backgroundRewriteDoneHandler(exitcode,bysignal);
-                if (!bysignal && exitcode == 0) receiveChildInfo();
-            }
-            updateDictResizePolicy();
-            closeChildInfoPipe();
-        }
-    } else {
-        /* If there is not a background saving/rewrite in progress check if
-         * we have to save/rewrite now */
-         for (j = 0; j < server.saveparamslen; j++) {
-            struct saveparam *sp = server.saveparams+j;
-
-            /* Save if we reached the given amount of changes,
-             * the given amount of seconds, and if the latest bgsave was
-             * successful or if, in case of an error, at least
-             * CONFIG_BGSAVE_RETRY_DELAY seconds already elapsed. */
-            if (server.dirty >= sp->changes &&
-                server.unixtime-server.lastsave > sp->seconds &&
-                (server.unixtime-server.lastbgsave_try >
-                 CONFIG_BGSAVE_RETRY_DELAY ||
-                 server.lastbgsave_status == C_OK))
-            {
-                serverLog(LL_NOTICE,"%d changes in %d seconds. Saving...",
-                    sp->changes, (int)sp->seconds);
-                rdbSaveBackground(server.rdb_filename,NULL);
-                break;
-            }
-         }
-
-         /* Trigger an AOF rewrite if needed */
-         if (server.rdb_child_pid == -1 &&
-             server.aof_child_pid == -1 &&
-             server.aof_rewrite_perc &&
-             server.aof_current_size > server.aof_rewrite_min_size)
-         {
-            long long base = server.aof_rewrite_base_size ?
-                            server.aof_rewrite_base_size : 1;
-            long long growth = (server.aof_current_size*100/base) - 100;
-            if (growth >= server.aof_rewrite_perc) {
-                serverLog(LL_NOTICE,"Starting automatic rewriting of AOF on %lld%% growth",growth);
-                rewriteAppendOnlyFileBackground();
-            }
-         }
-    }
-
-
-    /* AOF postponed flush: Try at every cron cycle if the slow fsync
-     * completed. */
-    if (server.aof_flush_postponed_start) flushAppendOnlyFile(0);
-
-    /* AOF write errors: in this case we have a buffer to flush as well and
-     * clear the AOF error in case of success to make the DB writable again,
-     * however to try every second is enough in case of 'hz' is set to
-     * an higher frequency. */
-    run_with_period(1000) {
-        if (server.aof_last_write_status == C_ERR)
-            flushAppendOnlyFile(0);
-    }
-
     /* Close clients that need to be closed asynchronous */
     freeClientsInAsyncFreeQueue();
 
     /* Clear the paused clients flag if needed. */
     clientsArePaused(); /* Don't check return value, just use the side effect.*/
-
-    /* Start a scheduled BGSAVE if the corresponding flag is set. This is
-     * useful when we are forced to postpone a BGSAVE because an AOF
-     * rewrite is in progress. */
-    if (server.rdb_child_pid == -1 && server.aof_child_pid == -1 &&
-        server.rdb_bgsave_scheduled &&
-        (server.unixtime-server.lastbgsave_try > CONFIG_BGSAVE_RETRY_DELAY ||
-         server.lastbgsave_status == C_OK))
-    {
-        if (rdbSaveBackground(server.rdb_filename,NULL) == C_OK)
-            server.rdb_bgsave_scheduled = 0;
-    }
 
     server.cronloops++;
     return 1000/server.hz;
@@ -927,11 +811,6 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
  * for ready file descriptors. */
 void beforeSleep(struct aeEventLoop *eventLoop) {
     UNUSED(eventLoop);
-
-    /* Run a fast expire cycle (the called function will return
-     * ASAP if a fast cycle is not needed). */
-    if (server.active_expire_enabled && server.masterhost == NULL)
-        activeExpireCycle(ACTIVE_EXPIRE_CYCLE_FAST);
 
     /* Send all the slaves an ACK request if at least one client blocked
      * during the previous event loop iteration. */
@@ -946,13 +825,6 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
         decrRefCount(argv[2]);
         server.get_ack_from_slaves = 0;
     }
-
-    /* Try to process pending commands for clients that were just unblocked. */
-    if (listLength(server.unblocked_clients))
-        processUnblockedClients();
-
-    /* Write the AOF buffer on disk */
-    flushAppendOnlyFile(0);
 
     /* Handle writes with pending output buffers. */
     handleClientsWithPendingWrites();
@@ -1525,24 +1397,10 @@ void initServer(void) {
         server.db[j].avg_ttl = 0;
     }
     evictionPoolAlloc(); /* Initialize the LRU keys pool. */
-    server.pubsub_channels = dictCreate(&keylistDictType,NULL);
-    server.pubsub_patterns = listCreate();
-    listSetFreeMethod(server.pubsub_patterns,freePubsubPattern);
-    listSetMatchMethod(server.pubsub_patterns,listMatchPubsubPattern);
     server.cronloops = 0;
-    server.rdb_child_pid = -1;
-    server.aof_child_pid = -1;
-    server.rdb_child_type = RDB_CHILD_TYPE_NONE;
-    server.rdb_bgsave_scheduled = 0;
     server.child_info_pipe[0] = -1;
     server.child_info_pipe[1] = -1;
     server.child_info_data.magic = 0;
-    aofRewriteBufferReset();
-    server.aof_buf = sdsempty();
-    server.lastsave = time(NULL); /* At startup we consider the DB saved. */
-    server.lastbgsave_try = 0;    /* At startup we never tried to BGSAVE. */
-    server.rdb_save_time_last = -1;
-    server.rdb_save_time_start = -1;
     server.dirty = 0;
     resetServerStats();
     /* A few stats we don't want to reset: server startup time, and peak mem. */
@@ -1870,13 +1728,11 @@ int processCommand(client *c) {
      * such as wrong arity, bad command name and so forth. */
     c->cmd = c->lastcmd = lookupCommand(c->argv[0]->ptr);
     if (!c->cmd) {
-        flagTransaction(c);
         addReplyErrorFormat(c,"unknown command '%s'",
             (char*)c->argv[0]->ptr);
         return C_OK;
     } else if ((c->cmd->arity > 0 && c->cmd->arity != c->argc) ||
                (c->argc < -c->cmd->arity)) {
-        flagTransaction(c);
         addReplyErrorFormat(c,"wrong number of arguments for '%s' command",
             c->cmd->name);
         return C_OK;
@@ -1885,7 +1741,6 @@ int processCommand(client *c) {
     /* Check if the user is authenticated */
     if (server.requirepass && !c->authenticated)
     {
-        flagTransaction(c);
         addReply(c,shared.noautherr);
         return C_OK;
     }
@@ -1904,7 +1759,6 @@ int processCommand(client *c) {
         /* It was impossible to free enough memory, and the command the client
          * is trying to execute is denied during OOM conditions? Error. */
         if ((c->cmd->flags & CMD_DENYOOM) && retval == C_ERR) {
-            flagTransaction(c);
             addReply(c, shared.oomerr);
             return C_OK;
         }
@@ -1919,7 +1773,6 @@ int processCommand(client *c) {
         server.masterhost == NULL &&
         c->cmd->flags & CMD_WRITE)
     {
-        flagTransaction(c);
         if (server.aof_last_write_status == C_OK)
             addReply(c, shared.bgsaveerr);
         else
@@ -1938,7 +1791,6 @@ int processCommand(client *c) {
         c->cmd->flags & CMD_WRITE &&
         server.repl_good_slaves_count < server.repl_min_slaves_to_write)
     {
-        flagTransaction(c);
         addReply(c, shared.noreplicaserr);
         return C_OK;
     }
@@ -1988,15 +1840,6 @@ int prepareForShutdown(int flags) {
 
     serverLog(LL_WARNING,"User requested shutdown...");
 
-    /* Kill the saving child if there is a background saving in progress.
-       We want to avoid race conditions, for instance our saving child may
-       overwrite the synchronous saving did by SHUTDOWN. */
-    if (server.rdb_child_pid != -1) {
-        serverLog(LL_WARNING,"There is a child saving an .rdb. Killing it!");
-        kill(server.rdb_child_pid,SIGUSR1);
-        rdbRemoveTempFile(server.rdb_child_pid);
-    }
-
     if (server.aof_state != AOF_OFF) {
         /* Kill the AOF saving child as the AOF we already have may be longer
          * but contains the full dataset anyway. */
@@ -2019,16 +1862,6 @@ int prepareForShutdown(int flags) {
     /* Create a new RDB file before exiting. */
     if ((server.saveparamslen > 0 && !nosave) || save) {
         serverLog(LL_NOTICE,"Saving the final RDB snapshot before exiting.");
-        /* Snapshotting. Perform a SYNC SAVE and exit */
-        if (rdbSave(server.rdb_filename,NULL) != C_OK) {
-            /* Ooops.. error saving! The best we can do is to continue
-             * operating. Note that if there was a background saving process,
-             * in the next cron() Redis will be notified that the background
-             * saving aborted, handling special stuff like slaves pending for
-             * synchronization... */
-            serverLog(LL_WARNING,"Error trying to save the DB, can't exit.");
-            return C_ERR;
-        }
     }
 
     /* Remove the pid file if possible and needed. */
@@ -2452,24 +2285,6 @@ sds genRedisInfoString(char *section) {
             (server.aof_last_write_status == C_OK) ? "ok" : "err",
             server.stat_aof_cow_bytes);
 
-        if (server.aof_state != AOF_OFF) {
-            info = sdscatprintf(info,
-                "aof_current_size:%lld\r\n"
-                "aof_base_size:%lld\r\n"
-                "aof_pending_rewrite:%d\r\n"
-                "aof_buffer_length:%zu\r\n"
-                "aof_rewrite_buffer_length:%lu\r\n"
-                "aof_pending_bio_fsync:%llu\r\n"
-                "aof_delayed_fsync:%lu\r\n",
-                (long long) server.aof_current_size,
-                (long long) server.aof_rewrite_base_size,
-                server.aof_rewrite_scheduled,
-                sdslen(server.aof_buf),
-                aofRewriteBufferSize(),
-                bioPendingJobsOfType(BIO_AOF_FSYNC),
-                server.aof_delayed_fsync);
-        }
-
         if (server.loading) {
             double perc;
             time_t eta, elapsed;
@@ -2877,7 +2692,6 @@ static void sigShutdownHandler(int sig) {
      * on disk. */
     if (server.shutdown_asap && sig == SIGINT) {
         serverLogFromHandler(LL_WARNING, "You insist... exiting now.");
-        rdbRemoveTempFile(getpid());
         exit(1); /* Exit with an error since this was not a clean shutdown. */
     } else if (server.loading) {
         exit(0);
@@ -2912,30 +2726,6 @@ void setupSignalHandlers(void) {
 
 void memtest(size_t megabytes, int passes);
 
-/* Function called at startup to load RDB or AOF file in memory. */
-void loadDataFromDisk(void) {
-    long long start = ustime();
-    if (server.aof_state == AOF_ON) {
-        if (loadAppendOnlyFile(server.aof_filename) == C_OK)
-            serverLog(LL_NOTICE,"DB loaded from append only file: %.3f seconds",(float)(ustime()-start)/1000000);
-    } else {
-        rdbSaveInfo rsi = RDB_SAVE_INFO_INIT;
-        if (rdbLoad(server.rdb_filename,&rsi) == C_OK) {
-            serverLog(LL_NOTICE,"DB loaded from disk: %.3f seconds",
-                (float)(ustime()-start)/1000000);
-
-            /* Restore the replication ID / offset from the RDB file. */
-            if (rsi.repl_id_is_set && rsi.repl_offset != -1) {
-                memcpy(server.replid,rsi.repl_id,sizeof(server.replid));
-                server.master_repl_offset = rsi.repl_offset;
-            }
-        } else if (errno != ENOENT) {
-            serverLog(LL_WARNING,"Fatal error loading the DB: %s. Exiting.",strerror(errno));
-            exit(1);
-        }
-    }
-}
-
 void redisOutOfMemoryHandler(size_t allocation_size) {
     serverLog(LL_WARNING,"Out Of Memory allocating %zu bytes!",
         allocation_size);
@@ -2943,17 +2733,7 @@ void redisOutOfMemoryHandler(size_t allocation_size) {
 }
 
 void redisSetProcTitle(char *title) {
-#ifdef USE_SETPROCTITLE
-    char *server_mode = "";
-
-    setproctitle("%s %s:%d%s",
-        title,
-        server.bindaddr_count ? server.bindaddr[0] : "*",
-        server.port,
-        server_mode);
-#else
     UNUSED(title);
-#endif
 }
 
 /*
@@ -3083,9 +2863,6 @@ int main(int argc, char **argv) {
 #endif
 
     /* We need to initialize our libraries, and the server configuration. */
-#ifdef INIT_SETPROCTITLE_REPLACEMENT
-    spt_init(argc, argv);
-#endif
     setlocale(LC_COLLATE,"");
     zmalloc_enable_thread_safeness();
     zmalloc_set_oom_handler(redisOutOfMemoryHandler);
@@ -3100,12 +2877,6 @@ int main(int argc, char **argv) {
     server.exec_argv = zmalloc(sizeof(char*)*(argc+1));
     server.exec_argv[argc] = NULL;
     for (j = 0; j < argc; j++) server.exec_argv[j] = zstrdup(argv[j]);
-
-    /* Check if we need to start in redis-check-rdb mode. We just execute
-     * the program main. However the program is part of the Redis executable
-     * so that we can easily execute an RDB check on loading errors. */
-    if (strstr(argv[0],"redis-check-rdb") != NULL)
-        redis_check_rdb_main(argc,argv);
 
     if (argc >= 2) {
         j = 1; /* First option to parse in argv[] */
@@ -3182,7 +2953,6 @@ int main(int argc, char **argv) {
 #ifdef __linux__
     linuxMemoryWarnings();
 #endif
-    loadDataFromDisk();
     if (server.ipfd_count > 0)
         serverLog(LL_NOTICE,"The server is now ready to accept connections on port %d", server.port);
     if (server.sofd > 0)

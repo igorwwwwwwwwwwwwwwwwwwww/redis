@@ -46,7 +46,6 @@
 #include <pthread.h>
 #include <syslog.h>
 #include <netinet/in.h>
-#include <lua.h>
 #include <signal.h>
 
 typedef long long mstime_t; /* millisecond time type. */
@@ -109,10 +108,6 @@ typedef long long mstime_t; /* millisecond time type. */
 #define CONFIG_BGSAVE_RETRY_DELAY 5 /* Wait a few secs before trying again. */
 #define CONFIG_DEFAULT_PID_FILE "/var/run/redis.pid"
 #define CONFIG_DEFAULT_SYSLOG_IDENT "redis"
-#define CONFIG_DEFAULT_CLUSTER_CONFIG_FILE "nodes.conf"
-#define CONFIG_DEFAULT_CLUSTER_ANNOUNCE_IP NULL         /* Auto detect. */
-#define CONFIG_DEFAULT_CLUSTER_ANNOUNCE_PORT 0          /* Use server.port */
-#define CONFIG_DEFAULT_CLUSTER_ANNOUNCE_BUS_PORT 0      /* Use +10000 offset. */
 #define CONFIG_DEFAULT_DAEMONIZE 0
 #define CONFIG_DEFAULT_UNIX_SOCKET_PERM 0
 #define CONFIG_DEFAULT_TCP_KEEPALIVE 300
@@ -200,7 +195,6 @@ typedef long long mstime_t; /* millisecond time type. */
 #define CMD_ASKING (1<<12)          /* "k" flag */
 #define CMD_FAST (1<<13)            /* "F" flag */
 #define CMD_MODULE_GETKEYS (1<<14)  /* Use the modules getkeys interface. */
-#define CMD_MODULE_NO_CLUSTER (1<<15) /* Deny on Redis Cluster. */
 
 /* AOF states */
 #define AOF_OFF 0             /* AOF is off */
@@ -621,11 +615,6 @@ typedef struct blockingState {
     /* BLOCKED_WAIT */
     int numreplicas;        /* Number of replicas we are waiting for ACK. */
     long long reploffset;   /* Replication offset to reach. */
-
-    /* BLOCKED_MODULE */
-    void *module_blocked_handle; /* RedisModuleBlockedClient structure.
-                                    which is opaque for the Redis core, only
-                                    handled in module.c. */
 } blockingState;
 
 /* The following structure represents a node in the server.ready_keys list,
@@ -827,8 +816,6 @@ typedef struct rdbSaveInfo {
 /*-----------------------------------------------------------------------------
  * Global server state
  *----------------------------------------------------------------------------*/
-
-struct clusterState;
 
 /* AIX defines hz to __hz, we don't use this define and in order to allow
  * Redis build on AIX we need to undef it. */
@@ -1101,35 +1088,6 @@ struct redisServer {
     list *pubsub_patterns;  /* A list of pubsub_patterns */
     int notify_keyspace_events; /* Events to propagate via Pub/Sub. This is an
                                    xor of NOTIFY_... flags. */
-    /* Cluster */
-    mstime_t cluster_node_timeout; /* Cluster node timeout. */
-    char *cluster_configfile; /* Cluster auto-generated config file name. */
-    struct clusterState *cluster;  /* State of the cluster */
-    int cluster_migration_barrier; /* Cluster replicas migration barrier. */
-    int cluster_slave_validity_factor; /* Slave max data age for failover. */
-    int cluster_require_full_coverage; /* If true, put the cluster down if
-                                          there is at least an uncovered slot.*/
-    char *cluster_announce_ip;  /* IP address to announce on cluster bus. */
-    int cluster_announce_port;     /* base port to announce on cluster bus. */
-    int cluster_announce_bus_port; /* bus port to announce on cluster bus. */
-    /* Scripting */
-    lua_State *lua; /* The Lua interpreter. We use just one for all clients */
-    client *lua_client;   /* The "fake client" to query Redis from Lua */
-    client *lua_caller;   /* The client running EVAL right now, or NULL */
-    dict *lua_scripts;         /* A dictionary of SHA1 -> Lua scripts */
-    mstime_t lua_time_limit;  /* Script timeout in milliseconds */
-    mstime_t lua_time_start;  /* Start time of script, milliseconds time */
-    int lua_write_dirty;  /* True if a write command was called during the
-                             execution of the current script. */
-    int lua_random_dirty; /* True if a random command was called during the
-                             execution of the current script. */
-    int lua_replicate_commands; /* True if we are doing single commands repl. */
-    int lua_multi_emitted;/* True if we already proagated MULTI. */
-    int lua_repl;         /* Script replication flags for redis.set_repl(). */
-    int lua_timedout;     /* True if we reached the time limit for script
-                             execution. */
-    int lua_kill;         /* Kill the script if true. */
-    int lua_always_replicate_commands; /* Default replication type. */
     /* Lazy free */
     int lazyfree_lazy_eviction;
     int lazyfree_lazy_expire;
@@ -1160,9 +1118,6 @@ struct redisCommand {
     int arity;
     char *sflags; /* Flags as string representation, one char per flag. */
     int flags;    /* The actual flags, obtained from the 'sflags' field. */
-    /* Use a function to determine keys arguments in a command line.
-     * Used for Redis Cluster redirect. */
-    redisGetKeysProc *getkeys_proc;
     /* What keys should be loaded in background when calling this command? */
     int firstkey; /* The first argument that's a key (0 = no keys) */
     int lastkey;  /* The last argument that's a key */
@@ -1236,8 +1191,6 @@ extern struct sharedObjectsStruct shared;
 extern dictType objectKeyPointerValueDictType;
 extern dictType setDictType;
 extern dictType zsetDictType;
-extern dictType clusterNodesDictType;
-extern dictType clusterNodesBlackListDictType;
 extern dictType dbDictType;
 extern dictType shaScriptObjectDictType;
 extern double R_Zero, R_PosInf, R_NegInf, R_Nan;
@@ -1249,18 +1202,6 @@ extern dictType modulesDictType;
 /*-----------------------------------------------------------------------------
  * Functions prototypes
  *----------------------------------------------------------------------------*/
-
-/* Modules */
-void moduleInitModulesSystem(void);
-int moduleLoad(const char *path, void **argv, int argc);
-void moduleLoadFromQueue(void);
-int *moduleGetCommandKeysViaAPI(struct redisCommand *cmd, robj **argv, int argc, int *numkeys);
-moduleType *moduleTypeLookupModuleByID(uint64_t id);
-void moduleTypeNameByID(char *name, uint64_t moduleid);
-void moduleFreeContext(struct RedisModuleCtx *ctx);
-void unblockClientFromModule(client *c);
-void moduleHandleBlockedClients(void);
-void moduleBlockedClientTimedOut(client *c);
 
 /* Utils */
 long long ustime(void);
@@ -1672,7 +1613,6 @@ void signalFlushedDb(int dbid);
 unsigned int getKeysInSlot(unsigned int hashslot, robj **keys, unsigned int count);
 unsigned int countKeysInSlot(unsigned int hashslot);
 unsigned int delKeysInSlot(unsigned int hashslot);
-int verifyClusterConfigWithData(void);
 void scanGenericCommand(client *c, robj *o, unsigned long cursor);
 int parseScanCursorOrReply(client *c, robj *o, unsigned long *cursor);
 void slotToKeyAdd(robj *key);
@@ -1690,22 +1630,6 @@ int *zunionInterGetKeys(struct redisCommand *cmd,robj **argv, int argc, int *num
 int *evalGetKeys(struct redisCommand *cmd, robj **argv, int argc, int *numkeys);
 int *sortGetKeys(struct redisCommand *cmd, robj **argv, int argc, int *numkeys);
 int *migrateGetKeys(struct redisCommand *cmd, robj **argv, int argc, int *numkeys);
-
-/* Cluster */
-void clusterInit(void);
-unsigned short crc16(const char *buf, int len);
-unsigned int keyHashSlot(char *key, int keylen);
-void clusterCron(void);
-void clusterPropagatePublish(robj *channel, robj *message);
-void migrateCloseTimedoutSockets(void);
-void clusterBeforeSleep(void);
-
-/* Sentinel */
-void initSentinelConfig(void);
-void initSentinel(void);
-void sentinelTimer(void);
-char *sentinelHandleConfiguration(char **argv, int argc);
-void sentinelIsRunning(void);
 
 /* redis-check-rdb */
 int redis_check_rdb(char *rdbfilename);

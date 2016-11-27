@@ -122,10 +122,10 @@ struct redisServer server; /* server global state */
  *    are not fast commands.
  */
 struct redisCommand redisCommandTable[] = {
-    {"get",getCommand,2,"rF",0,NULL,1,1,1,0,0},
-    {"set",setCommand,-3,"wm",0,NULL,1,1,1,0,0},
-    {"del",delCommand,-2,"w",0,NULL,1,-1,1,0,0},
-    {"info",infoCommand,-1,"lt",0,NULL,0,0,0,0,0}
+    {"get",getCommand,2,"rF",0,1,1,1,0,0},
+    {"set",setCommand,-3,"wm",0,1,1,1,0,0},
+    {"del",delCommand,-2,"w",0,1,-1,1,0,0},
+    {"info",infoCommand,-1,"lt",0,0,0,0,0,0}
 };
 
 /*============================ Utility functions ============================ */
@@ -960,10 +960,6 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
      * in WAIT. */
     if (listLength(server.clients_waiting_acks))
         processClientsWaitingReplicas();
-
-    /* Check if there are clients unblocked by modules that implement
-     * blocking commands. */
-    moduleHandleBlockedClients();
 
     /* Try to process pending commands for clients that were just unblocked. */
     if (listLength(server.unblocked_clients))
@@ -1891,16 +1887,6 @@ void call(client *c, int flags) {
     if (server.loading && c->flags & CLIENT_LUA)
         flags &= ~(CMD_CALL_SLOWLOG | CMD_CALL_STATS);
 
-    /* If the caller is Lua, we want to force the EVAL caller to propagate
-     * the script if the command flag or client flag are forcing the
-     * propagation. */
-    if (c->flags & CLIENT_LUA && server.lua_caller) {
-        if (c->flags & CLIENT_FORCE_REPL)
-            server.lua_caller->flags |= CLIENT_FORCE_REPL;
-        if (c->flags & CLIENT_FORCE_AOF)
-            server.lua_caller->flags |= CLIENT_FORCE_AOF;
-    }
-
     /* Log the command into the Slow log if needed, and populate the
      * per-command statistics that we show in INFO commandstats. */
     if (flags & CMD_CALL_SLOWLOG && c->cmd->proc != execCommand) {
@@ -2338,12 +2324,6 @@ void addReplyCommand(client *c, struct redisCommand *cmd) {
         flagcount += addReplyCommandFlag(c,cmd,CMD_SKIP_MONITOR, "skip_monitor");
         flagcount += addReplyCommandFlag(c,cmd,CMD_ASKING, "asking");
         flagcount += addReplyCommandFlag(c,cmd,CMD_FAST, "fast");
-        if ((cmd->getkeys_proc && !(cmd->flags & CMD_MODULE)) ||
-            cmd->flags & CMD_MODULE_GETKEYS)
-        {
-            addReplyStatus(c, "movablekeys");
-            flagcount += 1;
-        }
         setDeferredMultiBulkLength(c, flaglen, flagcount);
 
         addReplyLongLong(c, cmd->firstkey);
@@ -2525,13 +2505,11 @@ sds genRedisInfoString(char *section) {
         char hmem[64];
         char peak_hmem[64];
         char total_system_hmem[64];
-        char used_memory_lua_hmem[64];
         char used_memory_rss_hmem[64];
         char maxmemory_hmem[64];
         size_t zmalloc_used = zmalloc_used_memory();
         size_t total_system_mem = server.system_memory_size;
         const char *evict_policy = evictPolicyToString();
-        long long memory_lua = (long long)lua_gc(server.lua,LUA_GCCOUNT,0)*1024;
         struct redisMemOverhead *mh = getMemoryOverheadData();
 
         /* Peak memory is updated from time to time by serverCron() so it
@@ -2544,7 +2522,6 @@ sds genRedisInfoString(char *section) {
         bytesToHuman(hmem,zmalloc_used);
         bytesToHuman(peak_hmem,server.stat_peak_memory);
         bytesToHuman(total_system_hmem,total_system_mem);
-        bytesToHuman(used_memory_lua_hmem,memory_lua);
         bytesToHuman(used_memory_rss_hmem,server.resident_set_size);
         bytesToHuman(maxmemory_hmem,server.maxmemory);
 
@@ -2564,8 +2541,6 @@ sds genRedisInfoString(char *section) {
             "used_memory_dataset_perc:%.2f%%\r\n"
             "total_system_memory:%lu\r\n"
             "total_system_memory_human:%s\r\n"
-            "used_memory_lua:%lld\r\n"
-            "used_memory_lua_human:%s\r\n"
             "maxmemory:%lld\r\n"
             "maxmemory_human:%s\r\n"
             "maxmemory_policy:%s\r\n"
@@ -2585,8 +2560,6 @@ sds genRedisInfoString(char *section) {
             mh->dataset_perc,
             (unsigned long)total_system_mem,
             total_system_hmem,
-            memory_lua,
-            used_memory_lua_hmem,
             server.maxmemory,
             maxmemory_hmem,
             evict_policy,
@@ -3283,7 +3256,6 @@ int main(int argc, char **argv) {
     gettimeofday(&tv,NULL);
     dictSetHashFunctionSeed(tv.tv_sec^tv.tv_usec^getpid());
     initServerConfig();
-    moduleInitModulesSystem();
 
     /* Store the executable path and arguments in a safe place in order
      * to be able to restart the server later. */
@@ -3373,7 +3345,6 @@ int main(int argc, char **argv) {
 #ifdef __linux__
     linuxMemoryWarnings();
 #endif
-    moduleLoadFromQueue();
     loadDataFromDisk();
     if (server.ipfd_count > 0)
         serverLog(LL_NOTICE,"The server is now ready to accept connections on port %d", server.port);

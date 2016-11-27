@@ -538,8 +538,6 @@ void loadServerConfigFromString(char *config) {
                     err = "Target command name already exists"; goto loaderr;
                 }
             }
-        } else if (!strcasecmp(argv[0],"lua-time-limit") && argc == 2) {
-            server.lua_time_limit = strtoll(argv[1],NULL,10);
         } else if (!strcasecmp(argv[0],"slowlog-log-slower-than") &&
                    argc == 2)
         {
@@ -936,8 +934,6 @@ void configSetCommand(client *c) {
     } config_set_numerical_field(
       "hll-sparse-max-bytes",server.hll_sparse_max_bytes,0,LLONG_MAX) {
     } config_set_numerical_field(
-      "lua-time-limit",server.lua_time_limit,0,LLONG_MAX) {
-    } config_set_numerical_field(
       "slowlog-log-slower-than",server.slowlog_log_slower_than,0,LLONG_MAX) {
     } config_set_numerical_field(
       "slowlog-max-len",ll,0,LLONG_MAX) {
@@ -1092,7 +1088,6 @@ void configGetCommand(client *c) {
             server.zset_max_ziplist_value);
     config_get_numerical_field("hll-sparse-max-bytes",
             server.hll_sparse_max_bytes);
-    config_get_numerical_field("lua-time-limit",server.lua_time_limit);
     config_get_numerical_field("slowlog-log-slower-than",
             server.slowlog_log_slower_than);
     config_get_numerical_field("latency-monitor-threshold",
@@ -1821,7 +1816,6 @@ int rewriteConfig(char *path) {
     rewriteConfigYesNoOption(state,"no-appendfsync-on-rewrite",server.aof_no_fsync_on_rewrite,CONFIG_DEFAULT_AOF_NO_FSYNC_ON_REWRITE);
     rewriteConfigNumericalOption(state,"auto-aof-rewrite-percentage",server.aof_rewrite_perc,AOF_REWRITE_PERC);
     rewriteConfigBytesOption(state,"auto-aof-rewrite-min-size",server.aof_rewrite_min_size,AOF_REWRITE_MIN_SIZE);
-    rewriteConfigNumericalOption(state,"lua-time-limit",server.lua_time_limit,LUA_SCRIPT_TIME_LIMIT);
     rewriteConfigNumericalOption(state,"slowlog-log-slower-than",server.slowlog_log_slower_than,CONFIG_DEFAULT_SLOWLOG_LOG_SLOWER_THAN);
     rewriteConfigNumericalOption(state,"latency-monitor-threshold",server.latency_monitor_threshold,CONFIG_DEFAULT_LATENCY_MONITOR_THRESHOLD);
     rewriteConfigNumericalOption(state,"slowlog-max-len",server.slowlog_max_len,CONFIG_DEFAULT_SLOWLOG_MAX_LEN);

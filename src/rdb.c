@@ -755,26 +755,6 @@ ssize_t rdbSaveObject(rio *rdb, robj *o) {
             serverPanic("Unknown hash encoding");
         }
 
-    } else if (o->type == OBJ_MODULE) {
-        /* Save a module-specific value. */
-        RedisModuleIO io;
-        moduleValue *mv = o->ptr;
-        moduleType *mt = mv->type;
-        moduleInitIOContext(io,mt,rdb);
-
-        /* Write the "module" identifier as prefix, so that we'll be able
-         * to call the right module during loading. */
-        int retval = rdbSaveLen(rdb,mt->id);
-        if (retval == -1) return -1;
-        io.bytes += retval;
-
-        /* Then write the module-specific representation. */
-        mt->rdb_save(&io,mv->value);
-        if (io.ctx) {
-            moduleFreeContext(io.ctx);
-            zfree(io.ctx);
-        }
-        return io.error ? -1 : (ssize_t)io.bytes;
     } else {
         serverPanic("Unknown object type");
     }
@@ -1346,27 +1326,6 @@ robj *rdbLoadObject(int rdbtype, rio *rdb) {
                 rdbExitReportCorruptRDB("Unknown RDB encoding type %d",rdbtype);
                 break;
         }
-    } else if (rdbtype == RDB_TYPE_MODULE) {
-        uint64_t moduleid = rdbLoadLen(rdb,NULL);
-        moduleType *mt = moduleTypeLookupModuleByID(moduleid);
-        char name[10];
-
-        if (mt == NULL) {
-            moduleTypeNameByID(name,moduleid);
-            serverLog(LL_WARNING,"The RDB file contains module data I can't load: no matching module '%s'", name);
-            exit(1);
-        }
-        RedisModuleIO io;
-        moduleInitIOContext(io,mt,rdb);
-        /* Call the rdb_load method of the module providing the 10 bit
-         * encoding version in the lower 10 bits of the module ID. */
-        void *ptr = mt->rdb_load(&io,moduleid&1023);
-        if (ptr == NULL) {
-            moduleTypeNameByID(name,moduleid);
-            serverLog(LL_WARNING,"The RDB file contains module data for the module type '%s', that the responsible module is not able to load. Check for modules log above for additional clues.", name);
-            exit(1);
-        }
-        o = createModuleObject(mt,ptr);
     } else {
         rdbExitReportCorruptRDB("Unknown RDB encoding type %d",rdbtype);
     }

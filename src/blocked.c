@@ -136,8 +136,6 @@ void unblockClient(client *c) {
         unblockClientWaitingData(c);
     } else if (c->btype == BLOCKED_WAIT) {
         unblockClientWaitingReplicas(c);
-    } else if (c->btype == BLOCKED_MODULE) {
-        unblockClientFromModule(c);
     } else {
         serverPanic("Unknown btype in unblockClient().");
     }
@@ -162,8 +160,6 @@ void replyToBlockedClientTimedOut(client *c) {
         addReply(c,shared.nullmultibulk);
     } else if (c->btype == BLOCKED_WAIT) {
         addReplyLongLong(c,replicationCountAcksByOffset(c->bpop.reploffset));
-    } else if (c->btype == BLOCKED_MODULE) {
-        moduleBlockedClientTimedOut(c);
     } else {
         serverPanic("Unknown btype in replyToBlockedClientTimedOut().");
     }

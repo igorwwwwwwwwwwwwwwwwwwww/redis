@@ -1053,12 +1053,7 @@ int expireIfNeeded(redisDb *db, robj *key) {
     /* Don't expire anything while loading. It will be done later. */
     if (server.loading) return 0;
 
-    /* If we are in the context of a Lua script, we claim that time is
-     * blocked to when the Lua script started. This way a key can expire
-     * only the first time it is accessed and not in the middle of the
-     * script execution, making propagation to slaves / AOF consistent.
-     * See issue #1525 on Github for more information. */
-    now = server.lua_caller ? server.lua_time_start : mstime();
+    now = mstime();
 
     /* If we are running in the context of a slave, return ASAP:
      * the slave key expiration is controlled by the master that will
@@ -1118,13 +1113,7 @@ int *getKeysUsingCommandTable(struct redisCommand *cmd,robj **argv, int argc, in
  * This function uses the command table if a command-specific helper function
  * is not required, otherwise it calls the command-specific function. */
 int *getKeysFromCommand(struct redisCommand *cmd, robj **argv, int argc, int *numkeys) {
-    if (cmd->flags & CMD_MODULE_GETKEYS) {
-        return moduleGetCommandKeysViaAPI(cmd,argv,argc,numkeys);
-    } else if (!(cmd->flags & CMD_MODULE) && cmd->getkeys_proc) {
-        return cmd->getkeys_proc(cmd,argv,argc,numkeys);
-    } else {
-        return getKeysUsingCommandTable(cmd,argv,argc,numkeys);
-    }
+    return getKeysUsingCommandTable(cmd,argv,argc,numkeys);
 }
 
 /* Free the result of getKeysFromCommand. */

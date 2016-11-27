@@ -622,13 +622,6 @@ void loadServerConfigFromString(char *config) {
             }
         } else if (!strcasecmp(argv[0],"loadmodule") && argc >= 2) {
             queueLoadModule(argv[1],&argv[2],argc-2);
-        } else if (!strcasecmp(argv[0],"sentinel")) {
-            /* argc == 1 is handled by main() as we need to enter the sentinel
-             * mode ASAP. */
-            if (argc != 1) {
-                err = "sentinel directive while not in sentinel mode";
-                goto loaderr;
-            }
         } else {
             err = "Bad directive or wrong number of arguments"; goto loaderr;
         }

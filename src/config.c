@@ -318,58 +318,6 @@ void loadServerConfigFromString(char *config) {
             server.hz = atoi(argv[1]);
             if (server.hz < CONFIG_MIN_HZ) server.hz = CONFIG_MIN_HZ;
             if (server.hz > CONFIG_MAX_HZ) server.hz = CONFIG_MAX_HZ;
-        } else if (!strcasecmp(argv[0],"appendonly") && argc == 2) {
-            int yes;
-
-            if ((yes = yesnotoi(argv[1])) == -1) {
-                err = "argument must be 'yes' or 'no'"; goto loaderr;
-            }
-            server.aof_state = yes ? AOF_ON : AOF_OFF;
-        } else if (!strcasecmp(argv[0],"appendfilename") && argc == 2) {
-            if (!pathIsBaseName(argv[1])) {
-                err = "appendfilename can't be a path, just a filename";
-                goto loaderr;
-            }
-            zfree(server.aof_filename);
-            server.aof_filename = zstrdup(argv[1]);
-        } else if (!strcasecmp(argv[0],"no-appendfsync-on-rewrite")
-                   && argc == 2) {
-            if ((server.aof_no_fsync_on_rewrite= yesnotoi(argv[1])) == -1) {
-                err = "argument must be 'yes' or 'no'"; goto loaderr;
-            }
-        } else if (!strcasecmp(argv[0],"appendfsync") && argc == 2) {
-            server.aof_fsync = configEnumGetValue(aof_fsync_enum,argv[1]);
-            if (server.aof_fsync == INT_MIN) {
-                err = "argument must be 'no', 'always' or 'everysec'";
-                goto loaderr;
-            }
-        } else if (!strcasecmp(argv[0],"auto-aof-rewrite-percentage") &&
-                   argc == 2)
-        {
-            server.aof_rewrite_perc = atoi(argv[1]);
-            if (server.aof_rewrite_perc < 0) {
-                err = "Invalid negative percentage for AOF auto rewrite";
-                goto loaderr;
-            }
-        } else if (!strcasecmp(argv[0],"auto-aof-rewrite-min-size") &&
-                   argc == 2)
-        {
-            server.aof_rewrite_min_size = memtoll(argv[1],NULL);
-        } else if (!strcasecmp(argv[0],"aof-rewrite-incremental-fsync") &&
-                   argc == 2)
-        {
-            if ((server.aof_rewrite_incremental_fsync =
-                 yesnotoi(argv[1])) == -1) {
-                err = "argument must be 'yes' or 'no'"; goto loaderr;
-            }
-        } else if (!strcasecmp(argv[0],"aof-load-truncated") && argc == 2) {
-            if ((server.aof_load_truncated = yesnotoi(argv[1])) == -1) {
-                err = "argument must be 'yes' or 'no'"; goto loaderr;
-            }
-        } else if (!strcasecmp(argv[0],"aof-use-rdb-preamble") && argc == 2) {
-            if ((server.aof_use_rdb_preamble = yesnotoi(argv[1])) == -1) {
-                err = "argument must be 'yes' or 'no'"; goto loaderr;
-            }
         } else if (!strcasecmp(argv[0],"requirepass") && argc == 2) {
             if (strlen(argv[1]) > CONFIG_AUTHPASS_MAX_LEN) {
                 err = "Password is longer than CONFIG_AUTHPASS_MAX_LEN";
@@ -379,57 +327,6 @@ void loadServerConfigFromString(char *config) {
         } else if (!strcasecmp(argv[0],"pidfile") && argc == 2) {
             zfree(server.pidfile);
             server.pidfile = zstrdup(argv[1]);
-        } else if (!strcasecmp(argv[0],"dbfilename") && argc == 2) {
-            if (!pathIsBaseName(argv[1])) {
-                err = "dbfilename can't be a path, just a filename";
-                goto loaderr;
-            }
-            zfree(server.rdb_filename);
-            server.rdb_filename = zstrdup(argv[1]);
-        } else if (!strcasecmp(argv[0],"hash-max-ziplist-entries") && argc == 2) {
-            server.hash_max_ziplist_entries = memtoll(argv[1], NULL);
-        } else if (!strcasecmp(argv[0],"hash-max-ziplist-value") && argc == 2) {
-            server.hash_max_ziplist_value = memtoll(argv[1], NULL);
-        } else if (!strcasecmp(argv[0],"list-max-ziplist-entries") && argc == 2){
-            /* DEAD OPTION */
-        } else if (!strcasecmp(argv[0],"list-max-ziplist-value") && argc == 2) {
-            /* DEAD OPTION */
-        } else if (!strcasecmp(argv[0],"list-max-ziplist-size") && argc == 2) {
-            server.list_max_ziplist_size = atoi(argv[1]);
-        } else if (!strcasecmp(argv[0],"list-compress-depth") && argc == 2) {
-            server.list_compress_depth = atoi(argv[1]);
-        } else if (!strcasecmp(argv[0],"set-max-intset-entries") && argc == 2) {
-            server.set_max_intset_entries = memtoll(argv[1], NULL);
-        } else if (!strcasecmp(argv[0],"zset-max-ziplist-entries") && argc == 2) {
-            server.zset_max_ziplist_entries = memtoll(argv[1], NULL);
-        } else if (!strcasecmp(argv[0],"zset-max-ziplist-value") && argc == 2) {
-            server.zset_max_ziplist_value = memtoll(argv[1], NULL);
-        } else if (!strcasecmp(argv[0],"hll-sparse-max-bytes") && argc == 2) {
-            server.hll_sparse_max_bytes = memtoll(argv[1], NULL);
-        } else if (!strcasecmp(argv[0],"rename-command") && argc == 3) {
-            struct redisCommand *cmd = lookupCommand(argv[1]);
-            int retval;
-
-            if (!cmd) {
-                err = "No such command in rename-command";
-                goto loaderr;
-            }
-
-            /* If the target command name is the empty string we just
-             * remove it from the command table. */
-            retval = dictDelete(server.commands, argv[1]);
-            serverAssert(retval == DICT_OK);
-
-            /* Otherwise we re-add the command under a different name. */
-            if (sdslen(argv[2]) != 0) {
-                sds copy = sdsdup(argv[2]);
-
-                retval = dictAdd(server.commands, copy, cmd);
-                if (retval != DICT_OK) {
-                    sdsfree(copy);
-                    err = "Target command name already exists"; goto loaderr;
-                }
-            }
         } else if (!strcasecmp(argv[0],"slowlog-log-slower-than") &&
                    argc == 2)
         {

@@ -28,7 +28,6 @@
  */
 
 #include "server.h"
-#include "slowlog.h"
 
 #include <time.h>
 #include <signal.h>
@@ -925,10 +924,6 @@ void initServerConfig(void) {
     populateCommandTable();
     server.delCommand = lookupCommandByCString("del");
 
-    /* Slow log */
-    server.slowlog_log_slower_than = CONFIG_DEFAULT_SLOWLOG_LOG_SLOWER_THAN;
-    server.slowlog_max_len = CONFIG_DEFAULT_SLOWLOG_MAX_LEN;
-
     /* Debugging */
     server.assert_failed = "<no assertion failed>";
     server.assert_file = "<no file>";
@@ -1241,8 +1236,6 @@ void initServer(void) {
     /* A few stats we don't want to reset: server startup time, and peak mem. */
     server.stat_starttime = time(NULL);
     server.stat_peak_memory = 0;
-    server.stat_rdb_cow_bytes = 0;
-    server.stat_aof_cow_bytes = 0;
     server.resident_set_size = 0;
     updateCachedTime();
 
@@ -1267,7 +1260,6 @@ void initServer(void) {
     if (server.sofd > 0 && aeCreateFileEvent(server.el,server.sofd,AE_READABLE,
         acceptUnixHandler,NULL) == AE_ERR) serverPanic("Unrecoverable error creating server.sofd file event.");
 
-    slowlogInit();
     server.initial_memory_usage = zmalloc_used_memory();
 }
 
@@ -1392,38 +1384,8 @@ struct redisCommand *lookupCommandOrOriginal(sds name) {
  *
  * The following flags can be passed:
  * CMD_CALL_NONE        No flags.
- * CMD_CALL_SLOWLOG     Check command speed and log in the slow log if needed.
  * CMD_CALL_STATS       Populate command stats.
- * CMD_CALL_PROPAGATE_AOF   Append command to AOF if it modified the dataset
- *                          or if the client flags are forcing propagation.
- * CMD_CALL_PROPAGATE_REPL  Send command to salves if it modified the dataset
- *                          or if the client flags are forcing propagation.
- * CMD_CALL_PROPAGATE   Alias for PROPAGATE_AOF|PROPAGATE_REPL.
- * CMD_CALL_FULL        Alias for SLOWLOG|STATS|PROPAGATE.
- *
- * The exact propagation behavior depends on the client flags.
- * Specifically:
- *
- * 1. If the client flags CLIENT_FORCE_AOF or CLIENT_FORCE_REPL are set
- *    and assuming the corresponding CMD_CALL_PROPAGATE_AOF/REPL is set
- *    in the call flags, then the command is propagated even if the
- *    dataset was not affected by the command.
- * 2. If the client flags CLIENT_PREVENT_REPL_PROP or CLIENT_PREVENT_AOF_PROP
- *    are set, the propagation into AOF or to slaves is not performed even
- *    if the command modified the dataset.
- *
- * Note that regardless of the client flags, if CMD_CALL_PROPAGATE_AOF
- * or CMD_CALL_PROPAGATE_REPL are not set, then respectively AOF or
- * slaves propagation will never occur.
- *
- * Client flags are modified by the implementation of a given command
- * using the following API:
- *
- * forceCommandPropagation(client *c, int flags);
- * preventCommandPropagation(client *c);
- * preventCommandAOF(client *c);
- * preventCommandReplication(client *c);
- *
+ * CMD_CALL_FULL        Alias for STATS.
  */
 void call(client *c, int flags) {
     long long start, duration;
@@ -1435,9 +1397,6 @@ void call(client *c, int flags) {
 
     /* Log the command into the Slow log if needed, and populate the
      * per-command statistics that we show in INFO commandstats. */
-    if (flags & CMD_CALL_SLOWLOG) {
-        slowlogPushEntryIfNeeded(c->argv,c->argc,duration);
-    }
     if (flags & CMD_CALL_STATS) {
         c->lastcmd->microseconds += duration;
         c->lastcmd->calls++;

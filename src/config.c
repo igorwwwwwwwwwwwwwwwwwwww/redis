@@ -252,12 +252,6 @@ void loadServerConfigFromString(char *config) {
         } else if (!strcasecmp(argv[0],"pidfile") && argc == 2) {
             zfree(server.pidfile);
             server.pidfile = zstrdup(argv[1]);
-        } else if (!strcasecmp(argv[0],"slowlog-log-slower-than") &&
-                   argc == 2)
-        {
-            server.slowlog_log_slower_than = strtoll(argv[1],NULL,10);
-        } else if (!strcasecmp(argv[0],"slowlog-max-len") && argc == 2) {
-            server.slowlog_max_len = strtoll(argv[1],NULL,10);
         } else if (!strcasecmp(argv[0],"client-output-buffer-limit") &&
                    argc == 5)
         {
@@ -463,12 +457,6 @@ void configSetCommand(client *c) {
       "tcp-keepalive",server.tcpkeepalive,0,LLONG_MAX) {
     } config_set_numerical_field(
       "timeout",server.maxidletime,0,LONG_MAX) {
-    } config_set_numerical_field(
-      "slowlog-log-slower-than",server.slowlog_log_slower_than,0,LLONG_MAX) {
-    } config_set_numerical_field(
-      "slowlog-max-len",ll,0,LLONG_MAX) {
-      /* Cast to unsigned. */
-        server.slowlog_max_len = (unsigned)ll;
     } config_set_numerical_field(
       "hz",server.hz,0,LLONG_MAX) {
         /* Hz is more an hint from the user, so we accept values out of range

@@ -29,7 +29,6 @@
 
 #include "server.h"
 #include "slowlog.h"
-#include "bio.h"
 #include "latency.h"
 
 #include <time.h>
@@ -949,9 +948,6 @@ void initServerConfig(void) {
     server.migrate_cached_sockets = dictCreate(&migrateCacheDictType,NULL);
     server.next_client_id = 1; /* Client IDs, start from 1 .*/
     server.loading_process_events_interval_bytes = (1024*1024*2);
-    server.lazyfree_lazy_eviction = CONFIG_DEFAULT_LAZYFREE_LAZY_EVICTION;
-    server.lazyfree_lazy_expire = CONFIG_DEFAULT_LAZYFREE_LAZY_EXPIRE;
-    server.lazyfree_lazy_server_del = CONFIG_DEFAULT_LAZYFREE_LAZY_SERVER_DEL;
 
     resetServerSaveParams();
 
@@ -1359,7 +1355,6 @@ void initServer(void) {
 
     slowlogInit();
     latencyMonitorInit();
-    bioInit();
     server.initial_memory_usage = zmalloc_used_memory();
 }
 
@@ -2089,8 +2084,7 @@ sds genRedisInfoString(char *section) {
             "total_system_memory:%lu\r\n"
             "total_system_memory_human:%s\r\n"
             "mem_fragmentation_ratio:%.2f\r\n"
-            "mem_allocator:%s\r\n"
-            "lazyfree_pending_objects:%zu\r\n",
+            "mem_allocator:%s\r\n",
             zmalloc_used,
             hmem,
             server.resident_set_size,
@@ -2105,8 +2099,7 @@ sds genRedisInfoString(char *section) {
             (unsigned long)total_system_mem,
             total_system_hmem,
             mh->fragmentation,
-            ZMALLOC_LIB,
-            lazyfreeGetPendingObjectsCount()
+            ZMALLOC_LIB
         );
         freeMemoryOverheadData(mh);
     }

@@ -294,22 +294,6 @@ void loadServerConfigFromString(char *config) {
             if ((server.activerehashing = yesnotoi(argv[1])) == -1) {
                 err = "argument must be 'yes' or 'no'"; goto loaderr;
             }
-        } else if (!strcasecmp(argv[0],"lazyfree-lazy-eviction") && argc == 2) {
-            if ((server.lazyfree_lazy_eviction = yesnotoi(argv[1])) == -1) {
-                err = "argument must be 'yes' or 'no'"; goto loaderr;
-            }
-        } else if (!strcasecmp(argv[0],"lazyfree-lazy-expire") && argc == 2) {
-            if ((server.lazyfree_lazy_expire = yesnotoi(argv[1])) == -1) {
-                err = "argument must be 'yes' or 'no'"; goto loaderr;
-            }
-        } else if (!strcasecmp(argv[0],"lazyfree-lazy-server-del") && argc == 2){
-            if ((server.lazyfree_lazy_server_del = yesnotoi(argv[1])) == -1) {
-                err = "argument must be 'yes' or 'no'"; goto loaderr;
-            }
-        } else if (!strcasecmp(argv[0],"slave-lazy-flush") && argc == 2) {
-            if ((server.repl_slave_lazy_flush = yesnotoi(argv[1])) == -1) {
-                err = "argument must be 'yes' or 'no'"; goto loaderr;
-            }
         } else if (!strcasecmp(argv[0],"daemonize") && argc == 2) {
             if ((server.daemonize = yesnotoi(argv[1])) == -1) {
                 err = "argument must be 'yes' or 'no'"; goto loaderr;
@@ -629,37 +613,9 @@ void configSetCommand(client *c) {
     /* Boolean fields.
      * config_set_bool_field(name,var). */
     } config_set_bool_field(
-      "rdbcompression", server.rdb_compression) {
-    } config_set_bool_field(
-      "repl-disable-tcp-nodelay",server.repl_disable_tcp_nodelay) {
-    } config_set_bool_field(
-      "repl-diskless-sync",server.repl_diskless_sync) {
-    } config_set_bool_field(
-      "aof-rewrite-incremental-fsync",server.aof_rewrite_incremental_fsync) {
-    } config_set_bool_field(
-      "aof-load-truncated",server.aof_load_truncated) {
-    } config_set_bool_field(
-      "aof-use-rdb-preamble",server.aof_use_rdb_preamble) {
-    } config_set_bool_field(
-      "slave-serve-stale-data",server.repl_serve_stale_data) {
-    } config_set_bool_field(
-      "slave-read-only",server.repl_slave_ro) {
-    } config_set_bool_field(
       "activerehashing",server.activerehashing) {
     } config_set_bool_field(
       "protected-mode",server.protected_mode) {
-    } config_set_bool_field(
-      "stop-writes-on-bgsave-error",server.stop_writes_on_bgsave_err) {
-    } config_set_bool_field(
-      "lazyfree-lazy-eviction",server.lazyfree_lazy_eviction) {
-    } config_set_bool_field(
-      "lazyfree-lazy-expire",server.lazyfree_lazy_expire) {
-    } config_set_bool_field(
-      "lazyfree-lazy-server-del",server.lazyfree_lazy_server_del) {
-    } config_set_bool_field(
-      "slave-lazy-flush",server.repl_slave_lazy_flush) {
-    } config_set_bool_field(
-      "no-appendfsync-on-rewrite",server.aof_no_fsync_on_rewrite) {
 
     /* Numerical fields.
      * config_set_numerical_field(name,var,min,max) */
@@ -841,28 +797,8 @@ void configGetCommand(client *c) {
     config_get_bool_field("stop-writes-on-bgsave-error",
             server.stop_writes_on_bgsave_err);
     config_get_bool_field("daemonize", server.daemonize);
-    config_get_bool_field("rdbcompression", server.rdb_compression);
-    config_get_bool_field("rdbchecksum", server.rdb_checksum);
     config_get_bool_field("activerehashing", server.activerehashing);
     config_get_bool_field("protected-mode", server.protected_mode);
-    config_get_bool_field("repl-disable-tcp-nodelay",
-            server.repl_disable_tcp_nodelay);
-    config_get_bool_field("repl-diskless-sync",
-            server.repl_diskless_sync);
-    config_get_bool_field("aof-rewrite-incremental-fsync",
-            server.aof_rewrite_incremental_fsync);
-    config_get_bool_field("aof-load-truncated",
-            server.aof_load_truncated);
-    config_get_bool_field("aof-use-rdb-preamble",
-            server.aof_use_rdb_preamble);
-    config_get_bool_field("lazyfree-lazy-eviction",
-            server.lazyfree_lazy_eviction);
-    config_get_bool_field("lazyfree-lazy-expire",
-            server.lazyfree_lazy_expire);
-    config_get_bool_field("lazyfree-lazy-server-del",
-            server.lazyfree_lazy_server_del);
-    config_get_bool_field("slave-lazy-flush",
-            server.repl_slave_lazy_flush);
 
     /* Enum values */
     config_get_enum_field("loglevel",
@@ -1457,7 +1393,6 @@ int rewriteConfig(char *path) {
     rewriteConfigSyslogfacilityOption(state);
     rewriteConfigSaveOption(state);
     rewriteConfigNumericalOption(state,"databases",server.dbnum,CONFIG_DEFAULT_DBNUM);
-    rewriteConfigYesNoOption(state,"stop-writes-on-bgsave-error",server.stop_writes_on_bgsave_err,CONFIG_DEFAULT_STOP_WRITES_ON_BGSAVE_ERROR);
     rewriteConfigDirOption(state);
     rewriteConfigStringOption(state,"requirepass",server.requirepass,NULL);
     rewriteConfigNumericalOption(state,"maxclients",server.maxclients,CONFIG_DEFAULT_MAX_CLIENTS);
@@ -1469,10 +1404,6 @@ int rewriteConfig(char *path) {
     rewriteConfigClientoutputbufferlimitOption(state);
     rewriteConfigNumericalOption(state,"hz",server.hz,CONFIG_DEFAULT_HZ);
     rewriteConfigEnumOption(state,"supervised",server.supervised_mode,supervised_mode_enum,SUPERVISED_NONE);
-    rewriteConfigYesNoOption(state,"lazyfree-lazy-eviction",server.lazyfree_lazy_eviction,CONFIG_DEFAULT_LAZYFREE_LAZY_EVICTION);
-    rewriteConfigYesNoOption(state,"lazyfree-lazy-expire",server.lazyfree_lazy_expire,CONFIG_DEFAULT_LAZYFREE_LAZY_EXPIRE);
-    rewriteConfigYesNoOption(state,"lazyfree-lazy-server-del",server.lazyfree_lazy_server_del,CONFIG_DEFAULT_LAZYFREE_LAZY_SERVER_DEL);
-    rewriteConfigYesNoOption(state,"slave-lazy-flush",server.repl_slave_lazy_flush,CONFIG_DEFAULT_SLAVE_LAZY_FLUSH);
 
     /* Step 3: remove all the orphaned lines in the old file, that is, lines
      * that were used by a config option and are no longer used, like in case

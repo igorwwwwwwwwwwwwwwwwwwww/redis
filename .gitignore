@@ -1,7 +1,6 @@
 .*.swp
 *.o
 *.log
-dump.rdb
 redis-benchmark
 redis-cli
 redis-server

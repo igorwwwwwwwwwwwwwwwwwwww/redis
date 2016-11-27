@@ -121,9 +121,6 @@ typedef long long mstime_t; /* millisecond time type. */
 #define CONFIG_MIN_RESERVED_FDS 32
 #define CONFIG_DEFAULT_LATENCY_MONITOR_THRESHOLD 0
 #define CONFIG_DEFAULT_SLAVE_LAZY_FLUSH 0
-#define CONFIG_DEFAULT_LAZYFREE_LAZY_EVICTION 0
-#define CONFIG_DEFAULT_LAZYFREE_LAZY_EXPIRE 0
-#define CONFIG_DEFAULT_LAZYFREE_LAZY_SERVER_DEL 0
 
 #define ACTIVE_EXPIRE_CYCLE_LOOKUPS_PER_LOOP 20 /* Loopkups per loop. */
 #define ACTIVE_EXPIRE_CYCLE_FAST_DURATION 1000 /* Microseconds */
@@ -1011,10 +1008,6 @@ struct redisServer {
     list *pubsub_patterns;  /* A list of pubsub_patterns */
     int notify_keyspace_events; /* Events to propagate via Pub/Sub. This is an
                                    xor of NOTIFY_... flags. */
-    /* Lazy free */
-    int lazyfree_lazy_eviction;
-    int lazyfree_lazy_expire;
-    int lazyfree_lazy_server_del;
     /* Latency monitor */
     long long latency_monitor_threshold;
     dict *latency_events;
@@ -1344,9 +1337,7 @@ int dbSyncDelete(redisDb *db, robj *key);
 int dbDelete(redisDb *db, robj *key);
 robj *dbUnshareStringValue(redisDb *db, robj *key, robj *o);
 
-#define EMPTYDB_NO_FLAGS 0      /* No flags. */
-#define EMPTYDB_ASYNC (1<<0)    /* Reclaim memory in another thread. */
-long long emptyDb(int dbnum, int flags, void(callback)(void*));
+long long emptyDb(int dbnum, void(callback)(void*));
 
 int selectDb(client *c, int id);
 void signalFlushedDb(int dbid);
@@ -1361,7 +1352,6 @@ void slotToKeyFlush(void);
 int dbAsyncDelete(redisDb *db, robj *key);
 void emptyDbAsync(redisDb *db);
 void slotToKeyFlushAsync(void);
-size_t lazyfreeGetPendingObjectsCount(void);
 
 /* API to get key arguments from commands */
 int *getKeysFromCommand(struct redisCommand *cmd, robj **argv, int argc, int *numkeys);

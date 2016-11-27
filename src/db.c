@@ -221,8 +221,7 @@ int dbSyncDelete(redisDb *db, robj *key) {
 /* This is a wrapper whose behavior depends on the Redis lazy free
  * configuration. Deletes the key synchronously or asynchronously. */
 int dbDelete(redisDb *db, robj *key) {
-    return server.lazyfree_lazy_server_del ? dbAsyncDelete(db,key) :
-                                             dbSyncDelete(db,key);
+    return dbSyncDelete(db,key);
 }
 
 /* Prepare the string object stored at 'key' to be modified destructively
@@ -270,15 +269,11 @@ robj *dbUnshareStringValue(redisDb *db, robj *key, robj *o) {
  * The dbnum can be -1 if all teh DBs should be flushed, or the specified
  * DB number if we want to flush only a single Redis database number.
  *
- * Flags are be EMPTYDB_NO_FLAGS if no special flags are specified or
- * EMPTYDB_ASYNC if we want the memory to be freed in a different thread
- * and the function to return ASAP.
- *
  * On success the fuction returns the number of keys removed from the
  * database(s). Otherwise -1 is returned in the specific case the
  * DB number is out of range, and errno is set to EINVAL. */
-long long emptyDb(int dbnum, int flags, void(callback)(void*)) {
-    int j, async = (flags & EMPTYDB_ASYNC);
+long long emptyDb(int dbnum, void(callback)(void*)) {
+    int j;
     long long removed = 0;
 
     if (dbnum < -1 || dbnum >= server.dbnum) {
@@ -289,12 +284,8 @@ long long emptyDb(int dbnum, int flags, void(callback)(void*)) {
     for (j = 0; j < server.dbnum; j++) {
         if (dbnum != -1 && dbnum != j) continue;
         removed += dictSize(server.db[j].dict);
-        if (async) {
-            emptyDbAsync(&server.db[j]);
-        } else {
-            dictEmpty(server.db[j].dict,callback);
-            dictEmpty(server.db[j].expires,callback);
-        }
+        dictEmpty(server.db[j].dict,callback);
+        dictEmpty(server.db[j].expires,callback);
     }
     return removed;
 }
@@ -310,36 +301,13 @@ int selectDb(client *c, int id) {
  * Type agnostic commands operating on the key space
  *----------------------------------------------------------------------------*/
 
-/* Return the set of flags to use for the emptyDb() call for FLUSHALL
- * and FLUSHDB commands.
- *
- * Currently the command just attempts to parse the "ASYNC" option. It
- * also checks if the command arity is wrong.
- *
- * On success C_OK is returned and the flags are stored in *flags, otherwise
- * C_ERR is returned and the function sends an error to the client. */
-int getFlushCommandFlags(client *c, int *flags) {
-    /* Parse the optional ASYNC option. */
-    if (c->argc > 1) {
-        if (c->argc > 2 || strcasecmp(c->argv[1]->ptr,"async")) {
-            addReply(c,shared.syntaxerr);
-            return C_ERR;
-        }
-        *flags = EMPTYDB_ASYNC;
-    } else {
-        *flags = EMPTYDB_NO_FLAGS;
-    }
-    return C_OK;
-}
-
 /* This command implements DEL and LAZYDEL. */
-void delGenericCommand(client *c, int lazy) {
+void delGenericCommand(client *c) {
     int numdel = 0, j;
 
     for (j = 1; j < c->argc; j++) {
         expireIfNeeded(c->db,c->argv[j]);
-        int deleted  = lazy ? dbAsyncDelete(c->db,c->argv[j]) :
-                              dbSyncDelete(c->db,c->argv[j]);
+        int deleted  = dbSyncDelete(c->db,c->argv[j]);
         if (deleted) {
             server.dirty++;
             numdel++;
@@ -349,11 +317,7 @@ void delGenericCommand(client *c, int lazy) {
 }
 
 void delCommand(client *c) {
-    delGenericCommand(c,0);
-}
-
-void unlinkCommand(client *c) {
-    delGenericCommand(c,1);
+    delGenericCommand(c);
 }
 
 /* EXISTS key1 key2 ... key_N.
@@ -932,8 +896,7 @@ int expireIfNeeded(redisDb *db, robj *key) {
 
     /* Delete the key */
     server.stat_expiredkeys++;
-    return server.lazyfree_lazy_expire ? dbAsyncDelete(db,key) :
-                                         dbSyncDelete(db,key);
+    return dbSyncDelete(db,key);
 }
 
 /* -----------------------------------------------------------------------------

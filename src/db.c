@@ -28,7 +28,6 @@
  */
 
 #include "server.h"
-#include "cluster.h"
 #include "atomicvar.h"
 
 #include <signal.h>
@@ -163,7 +162,6 @@ void dbAdd(redisDb *db, robj *key, robj *val) {
 
     serverAssertWithInfo(NULL,key,retval == DICT_OK);
     if (val->type == OBJ_LIST) signalListAsReady(db, key);
-    if (server.cluster_enabled) slotToKeyAdd(key);
  }
 
 /* Overwrite an existing key with a new value. Incrementing the reference
@@ -238,7 +236,6 @@ int dbSyncDelete(redisDb *db, robj *key) {
      * the key, because it is shared with the main dictionary. */
     if (dictSize(db->expires) > 0) dictDelete(db->expires,key->ptr);
     if (dictDelete(db->dict,key->ptr) == DICT_OK) {
-        if (server.cluster_enabled) slotToKeyDel(key);
         return 1;
     } else {
         return 0;
@@ -321,13 +318,6 @@ long long emptyDb(int dbnum, int flags, void(callback)(void*)) {
         } else {
             dictEmpty(server.db[j].dict,callback);
             dictEmpty(server.db[j].expires,callback);
-        }
-    }
-    if (server.cluster_enabled) {
-        if (async) {
-            slotToKeyFlushAsync();
-        } else {
-            slotToKeyFlush();
         }
     }
     return removed;
@@ -466,10 +456,6 @@ void selectCommand(client *c) {
         "invalid DB index") != C_OK)
         return;
 
-    if (server.cluster_enabled && id != 0) {
-        addReplyError(c,"SELECT is not allowed in cluster mode");
-        return;
-    }
     if (selectDb(c,id) == C_ERR) {
         addReplyError(c,"DB index is out of range");
     } else {
@@ -877,11 +863,6 @@ void moveCommand(client *c) {
     int srcid;
     long long dbid, expire;
 
-    if (server.cluster_enabled) {
-        addReplyError(c,"MOVE is not allowed in cluster mode");
-        return;
-    }
-
     /* Obtain source and target DB pointers */
     src = c->db;
     srcid = c->db->id;
@@ -985,12 +966,6 @@ int dbSwapDatabases(int id1, int id2) {
 /* SWAPDB db1 db2 */
 void swapdbCommand(client *c) {
     long id1, id2;
-
-    /* Not allowed in cluster mode: we have just DB 0 there. */
-    if (server.cluster_enabled) {
-        addReplyError(c,"SWAPDB is not allowed in cluster mode");
-        return;
-    }
 
     /* Get the two DBs indexes. */
     if (getLongFromObjectOrReply(c, c->argv[1], &id1,
@@ -1286,94 +1261,4 @@ int *migrateGetKeys(struct redisCommand *cmd, robj **argv, int argc, int *numkey
     for (i = 0; i < num; i++) keys[i] = first+i;
     *numkeys = num;
     return keys;
-}
-
-/* Slot to Key API. This is used by Redis Cluster in order to obtain in
- * a fast way a key that belongs to a specified hash slot. This is useful
- * while rehashing the cluster. */
-void slotToKeyAdd(robj *key) {
-    unsigned int hashslot = keyHashSlot(key->ptr,sdslen(key->ptr));
-
-    sds sdskey = sdsdup(key->ptr);
-    zslInsert(server.cluster->slots_to_keys,hashslot,sdskey);
-}
-
-void slotToKeyDel(robj *key) {
-    unsigned int hashslot = keyHashSlot(key->ptr,sdslen(key->ptr));
-    zslDelete(server.cluster->slots_to_keys,hashslot,key->ptr,NULL);
-}
-
-void slotToKeyFlush(void) {
-    zslFree(server.cluster->slots_to_keys);
-    server.cluster->slots_to_keys = zslCreate();
-}
-
-/* Pupulate the specified array of objects with keys in the specified slot.
- * New objects are returned to represent keys, it's up to the caller to
- * decrement the reference count to release the keys names. */
-unsigned int getKeysInSlot(unsigned int hashslot, robj **keys, unsigned int count) {
-    zskiplistNode *n;
-    zrangespec range;
-    int j = 0;
-
-    range.min = range.max = hashslot;
-    range.minex = range.maxex = 0;
-
-    n = zslFirstInRange(server.cluster->slots_to_keys, &range);
-    while(n && n->score == hashslot && count--) {
-        keys[j++] = createStringObject(n->ele,sdslen(n->ele));
-        n = n->level[0].forward;
-    }
-    return j;
-}
-
-/* Remove all the keys in the specified hash slot.
- * The number of removed items is returned. */
-unsigned int delKeysInSlot(unsigned int hashslot) {
-    zskiplistNode *n;
-    zrangespec range;
-    int j = 0;
-
-    range.min = range.max = hashslot;
-    range.minex = range.maxex = 0;
-
-    n = zslFirstInRange(server.cluster->slots_to_keys, &range);
-    while(n && n->score == hashslot) {
-        sds sdskey = n->ele;
-        robj *key = createStringObject(sdskey,sdslen(sdskey));
-        n = n->level[0].forward; /* Go to the next item before freeing it. */
-        dbDelete(&server.db[0],key);
-        decrRefCount(key);
-        j++;
-    }
-    return j;
-}
-
-unsigned int countKeysInSlot(unsigned int hashslot) {
-    zskiplist *zsl = server.cluster->slots_to_keys;
-    zskiplistNode *zn;
-    zrangespec range;
-    int rank, count = 0;
-
-    range.min = range.max = hashslot;
-    range.minex = range.maxex = 0;
-
-    /* Find first element in range */
-    zn = zslFirstInRange(zsl, &range);
-
-    /* Use rank of first element, if any, to determine preliminary count */
-    if (zn != NULL) {
-        rank = zslGetRank(zsl, zn->score, zn->ele);
-        count = (zsl->length - (rank - 1));
-
-        /* Find last element in range */
-        zn = zslLastInRange(zsl, &range);
-
-        /* Use rank of last element, if any, to determine the actual count */
-        if (zn != NULL) {
-            rank = zslGetRank(zsl, zn->score, zn->ele);
-            count -= (zsl->length - rank);
-        }
-    }
-    return count;
 }

@@ -28,7 +28,6 @@
  */
 
 #include "server.h"
-#include "cluster.h"
 #include <dlfcn.h>
 
 #define REDISMODULE_CORE 1
@@ -593,8 +592,6 @@ int commandFlagsFromString(char *s) {
 int RM_CreateCommand(RedisModuleCtx *ctx, const char *name, RedisModuleCmdFunc cmdfunc, const char *strflags, int firstkey, int lastkey, int keystep) {
     int flags = strflags ? commandFlagsFromString((char*)strflags) : 0;
     if (flags == -1) return REDISMODULE_ERR;
-    if ((flags & CMD_MODULE_NO_CLUSTER) && server.cluster_enabled)
-        return REDISMODULE_ERR;
 
     struct redisCommand *rediscmd;
     RedisModuleCommandProxy *cp;
@@ -2471,21 +2468,6 @@ RedisModuleCallReply *RM_Call(RedisModuleCtx *ctx, const char *cmdname, const ch
         goto cleanup;
     }
 
-    /* If this is a Redis Cluster node, we need to make sure the module is not
-     * trying to access non-local keys, with the exception of commands
-     * received from our master. */
-    if (server.cluster_enabled && !(ctx->client->flags & CLIENT_MASTER)) {
-        /* Duplicate relevant flags in the module client. */
-        c->flags &= ~(CLIENT_READONLY|CLIENT_ASKING);
-        c->flags |= ctx->client->flags & (CLIENT_READONLY|CLIENT_ASKING);
-        if (getNodeByQuery(c,c->cmd,c->argv,c->argc,NULL,NULL) !=
-                           server.cluster->myself)
-        {
-            errno = EPERM;
-            goto cleanup;
-        }
-    }
-
     /* If we are using single commands replication, we need to wrap what
      * we propagate into a MULTI/EXEC block, so that it will be atomic like
      * a Lua script in the context of AOF and slaves. */
@@ -2913,7 +2895,7 @@ double RM_LoadDouble(RedisModuleIO *io) {
     return value;
 }
 
-/* In the context of the rdb_save method of a module data type, saves a float 
+/* In the context of the rdb_save method of a module data type, saves a float
  * value to the RDB file. The float can be a valid number, a NaN or infinity.
  * It is possible to load back the value with RedisModule_LoadFloat(). */
 void RM_SaveFloat(RedisModuleIO *io, float value) {

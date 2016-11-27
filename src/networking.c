@@ -103,7 +103,6 @@ client *createClient(int fd) {
     c->sentlen = 0;
     c->flags = 0;
     c->ctime = c->lastinteraction = server.unixtime;
-    c->authenticated = 0;
     c->replstate = REPL_STATE_NONE;
     c->repl_put_online_on_ack = 0;
     c->reploff = 0;
@@ -628,7 +627,6 @@ static void acceptCommonHandler(int fd, int flags, char *ip) {
      * user what to do to fix it if needed. */
     if (server.protected_mode &&
         server.bindaddr_count == 0 &&
-        server.requirepass == NULL &&
         !(flags & CLIENT_UNIX_SOCKET) &&
         ip != NULL)
     {

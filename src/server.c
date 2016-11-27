@@ -1633,13 +1633,6 @@ int processCommand(client *c) {
         return C_OK;
     }
 
-    /* Check if the user is authenticated */
-    if (server.requirepass && !c->authenticated)
-    {
-        addReply(c,shared.noautherr);
-        return C_OK;
-    }
-
     /* Don't accept write commands if there are problems persisting on disk
      * and if this is a master instance. */
     if (((server.stop_writes_on_bgsave_err &&

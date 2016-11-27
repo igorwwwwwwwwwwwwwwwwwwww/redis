@@ -302,12 +302,6 @@ void loadServerConfigFromString(char *config) {
             server.hz = atoi(argv[1]);
             if (server.hz < CONFIG_MIN_HZ) server.hz = CONFIG_MIN_HZ;
             if (server.hz > CONFIG_MAX_HZ) server.hz = CONFIG_MAX_HZ;
-        } else if (!strcasecmp(argv[0],"requirepass") && argc == 2) {
-            if (strlen(argv[1]) > CONFIG_AUTHPASS_MAX_LEN) {
-                err = "Password is longer than CONFIG_AUTHPASS_MAX_LEN";
-                goto loaderr;
-            }
-            server.requirepass = zstrdup(argv[1]);
         } else if (!strcasecmp(argv[0],"pidfile") && argc == 2) {
             zfree(server.pidfile);
             server.pidfile = zstrdup(argv[1]);
@@ -491,13 +485,6 @@ void configSetCommand(client *c) {
         }
         zfree(server.rdb_filename);
         server.rdb_filename = zstrdup(o->ptr);
-    } config_set_special_field("requirepass") {
-        if (sdslen(o->ptr) > CONFIG_AUTHPASS_MAX_LEN) goto badfmt;
-        zfree(server.requirepass);
-        server.requirepass = ((char*)o->ptr)[0] ? zstrdup(o->ptr) : NULL;
-    } config_set_special_field("masterauth") {
-        zfree(server.masterauth);
-        server.masterauth = ((char*)o->ptr)[0] ? zstrdup(o->ptr) : NULL;
     } config_set_special_field("maxclients") {
         int orig_value = server.maxclients;
 
@@ -735,8 +722,6 @@ void configGetCommand(client *c) {
 
     /* String values */
     config_get_string_field("dbfilename",server.rdb_filename);
-    config_get_string_field("requirepass",server.requirepass);
-    config_get_string_field("masterauth",server.masterauth);
     config_get_string_field("unixsocket",server.unixsocket);
     config_get_string_field("logfile",server.logfile);
     config_get_string_field("pidfile",server.pidfile);
@@ -1394,7 +1379,6 @@ int rewriteConfig(char *path) {
     rewriteConfigSaveOption(state);
     rewriteConfigNumericalOption(state,"databases",server.dbnum,CONFIG_DEFAULT_DBNUM);
     rewriteConfigDirOption(state);
-    rewriteConfigStringOption(state,"requirepass",server.requirepass,NULL);
     rewriteConfigNumericalOption(state,"maxclients",server.maxclients,CONFIG_DEFAULT_MAX_CLIENTS);
     rewriteConfigNumericalOption(state,"slowlog-log-slower-than",server.slowlog_log_slower_than,CONFIG_DEFAULT_SLOWLOG_LOG_SLOWER_THAN);
     rewriteConfigNumericalOption(state,"latency-monitor-threshold",server.latency_monitor_threshold,CONFIG_DEFAULT_LATENCY_MONITOR_THRESHOLD);

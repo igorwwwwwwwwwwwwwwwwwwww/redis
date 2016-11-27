@@ -3009,8 +3009,6 @@ void usage(void) {
     fprintf(stderr,"       ./redis-server --port 7777\n");
     fprintf(stderr,"       ./redis-server --port 7777 --slaveof 127.0.0.1 8888\n");
     fprintf(stderr,"       ./redis-server /etc/myredis.conf --loglevel verbose\n\n");
-    fprintf(stderr,"Sentinel mode:\n");
-    fprintf(stderr,"       ./redis-server /etc/sentinel.conf --sentinel\n");
     exit(1);
 }
 
@@ -3099,17 +3097,6 @@ void setupSignalHandlers(void) {
 }
 
 void memtest(size_t megabytes, int passes);
-
-/* Returns 1 if there is --sentinel among the arguments or if
- * argv[0] contains "redis-sentinel". */
-int checkForSentinelMode(int argc, char **argv) {
-    int j;
-
-    if (strstr(argv[0],"redis-sentinel") != NULL) return 1;
-    for (j = 1; j < argc; j++)
-        if (!strcmp(argv[j],"--sentinel")) return 1;
-    return 0;
-}
 
 /* Function called at startup to load RDB or AOF file in memory. */
 void loadDataFromDisk(void) {

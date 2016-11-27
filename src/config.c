@@ -1272,10 +1272,6 @@ int dictSdsKeyCaseCompare(void *privdata, const void *key1, const void *key2);
 void dictSdsDestructor(void *privdata, void *val);
 void dictListDestructor(void *privdata, void *val);
 
-/* Sentinel config rewriting is implemented inside sentinel.c by
- * rewriteConfigSentinelOption(). */
-void rewriteConfigSentinelOption(struct rewriteConfigState *state);
-
 dictType optionToLineDictType = {
     dictSdsCaseHash,            /* hash function */
     NULL,                       /* key dup */

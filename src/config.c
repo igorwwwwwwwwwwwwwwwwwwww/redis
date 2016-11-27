@@ -626,12 +626,8 @@ void loadServerConfigFromString(char *config) {
             /* argc == 1 is handled by main() as we need to enter the sentinel
              * mode ASAP. */
             if (argc != 1) {
-                if (!server.sentinel_mode) {
-                    err = "sentinel directive while not in sentinel mode";
-                    goto loaderr;
-                }
-                err = sentinelHandleConfiguration(argv+1,argc-1);
-                if (err) goto loaderr;
+                err = "sentinel directive while not in sentinel mode";
+                goto loaderr;
             }
         } else {
             err = "Bad directive or wrong number of arguments"; goto loaderr;
@@ -1861,9 +1857,6 @@ int rewriteConfig(char *path) {
     rewriteConfigYesNoOption(state,"lazyfree-lazy-expire",server.lazyfree_lazy_expire,CONFIG_DEFAULT_LAZYFREE_LAZY_EXPIRE);
     rewriteConfigYesNoOption(state,"lazyfree-lazy-server-del",server.lazyfree_lazy_server_del,CONFIG_DEFAULT_LAZYFREE_LAZY_SERVER_DEL);
     rewriteConfigYesNoOption(state,"slave-lazy-flush",server.repl_slave_lazy_flush,CONFIG_DEFAULT_SLAVE_LAZY_FLUSH);
-
-    /* Rewrite Sentinel config if in Sentinel mode. */
-    if (server.sentinel_mode) rewriteConfigSentinelOption(state);
 
     /* Step 3: remove all the orphaned lines in the old file, that is, lines
      * that were used by a config option and are no longer used, like in case

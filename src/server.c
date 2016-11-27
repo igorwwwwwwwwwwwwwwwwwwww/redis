@@ -157,9 +157,7 @@ void serverLogRaw(int level, const char *msg) {
         gettimeofday(&tv,NULL);
         off = strftime(buf,sizeof(buf),"%d %b %H:%M:%S.",localtime(&tv.tv_sec));
         snprintf(buf+off,sizeof(buf)-off,"%03d",(int)tv.tv_usec/1000);
-        if (server.sentinel_mode) {
-            role_char = 'X'; /* Sentinel. */
-        } else if (pid != server.pid) {
+        if (pid != server.pid) {
             role_char = 'C'; /* RDB / AOF writing child. */
         } else {
             role_char = (server.masterhost ? 'S':'M'); /* Slave or Master. */
@@ -799,14 +797,12 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     }
 
     /* Show information about connected clients */
-    if (!server.sentinel_mode) {
-        run_with_period(5000) {
-            serverLog(LL_VERBOSE,
-                "%lu clients connected (%lu slaves), %zu bytes in use",
-                listLength(server.clients)-listLength(server.slaves),
-                listLength(server.slaves),
-                zmalloc_used_memory());
-        }
+    run_with_period(5000) {
+        serverLog(LL_VERBOSE,
+            "%lu clients connected (%lu slaves), %zu bytes in use",
+            listLength(server.clients)-listLength(server.slaves),
+            listLength(server.slaves),
+            zmalloc_used_memory());
     }
 
     /* We need to do a few operations on clients asynchronously. */
@@ -913,11 +909,6 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     /* Replication cron function -- used to reconnect to master,
      * detect transfer failures, start background RDB transfers and so forth. */
     run_with_period(1000) replicationCron();
-
-    /* Run the Sentinel timer if we are in sentinel mode. */
-    run_with_period(100) {
-        if (server.sentinel_mode) sentinelTimer();
-    }
 
     /* Start a scheduled BGSAVE if the corresponding flag is set. This is
      * useful when we are forced to postpone a BGSAVE because an AOF
@@ -2213,7 +2204,7 @@ int prepareForShutdown(int flags) {
     /* Close the listening sockets. Apparently this allows faster restarts. */
     closeListeningSockets(1);
     serverLog(LL_WARNING,"%s is now ready to exit, bye bye...",
-        server.sentinel_mode ? "Sentinel" : "Redis");
+        "Redis");
     return C_OK;
 }
 
@@ -2461,8 +2452,7 @@ sds genRedisInfoString(char *section) {
         static struct utsname name;
         char *mode;
 
-        if (server.sentinel_mode) mode = "sentinel";
-        else mode = "standalone";
+        mode = "standalone";
 
         if (sections++) info = sdscat(info,"\r\n");
 
@@ -3029,8 +3019,7 @@ void redisAsciiArt(void) {
     char *buf = zmalloc(1024*16);
     char *mode;
 
-    if (server.sentinel_mode) mode = "sentinel";
-    else mode = "standalone";
+    mode = "standalone";
 
     if (server.syslog_enabled) {
         serverLog(LL_NOTICE,
@@ -3159,7 +3148,6 @@ void redisOutOfMemoryHandler(size_t allocation_size) {
 void redisSetProcTitle(char *title) {
 #ifdef USE_SETPROCTITLE
     char *server_mode = "";
-    if (server.sentinel_mode) server_mode = " [sentinel]";
 
     setproctitle("%s %s:%d%s",
         title,
@@ -3307,7 +3295,6 @@ int main(int argc, char **argv) {
     srand(time(NULL)^getpid());
     gettimeofday(&tv,NULL);
     dictSetHashFunctionSeed(tv.tv_sec^tv.tv_usec^getpid());
-    server.sentinel_mode = checkForSentinelMode(argc,argv);
     initServerConfig();
     moduleInitModulesSystem();
 
@@ -3317,14 +3304,6 @@ int main(int argc, char **argv) {
     server.exec_argv = zmalloc(sizeof(char*)*(argc+1));
     server.exec_argv[argc] = NULL;
     for (j = 0; j < argc; j++) server.exec_argv[j] = zstrdup(argv[j]);
-
-    /* We need to init sentinel right now as parsing the configuration file
-     * in sentinel mode will have the effect of populating the sentinel
-     * data structures with master nodes to monitor. */
-    if (server.sentinel_mode) {
-        initSentinelConfig();
-        initSentinel();
-    }
 
     /* Check if we need to start in redis-check-rdb mode. We just execute
      * the program main. However the program is part of the Redis executable
@@ -3386,18 +3365,11 @@ int main(int argc, char **argv) {
             }
             j++;
         }
-        if (server.sentinel_mode && configfile && *configfile == '-') {
-            serverLog(LL_WARNING,
-                "Sentinel config from STDIN not allowed.");
-            serverLog(LL_WARNING,
-                "Sentinel needs config file on disk to save state.  Exiting...");
-            exit(1);
-        }
         resetServerSaveParams();
         loadServerConfig(configfile,options);
         sdsfree(options);
     } else {
-        serverLog(LL_WARNING, "Warning: no config file specified, using the default config. In order to specify a config file use %s /path/to/%s.conf", argv[0], server.sentinel_mode ? "sentinel" : "redis");
+        serverLog(LL_WARNING, "Warning: no config file specified, using the default config. In order to specify a config file use %s /path/to/%s.conf", argv[0], "redis");
     }
 
     server.supervised = redisIsSupervised(server.supervised_mode);
@@ -3410,21 +3382,16 @@ int main(int argc, char **argv) {
     redisAsciiArt();
     checkTcpBacklogSettings();
 
-    if (!server.sentinel_mode) {
-        /* Things not needed when running in Sentinel mode. */
-        serverLog(LL_WARNING,"Server started, Redis version " REDIS_VERSION);
-    #ifdef __linux__
-        linuxMemoryWarnings();
-    #endif
-        moduleLoadFromQueue();
-        loadDataFromDisk();
-        if (server.ipfd_count > 0)
-            serverLog(LL_NOTICE,"The server is now ready to accept connections on port %d", server.port);
-        if (server.sofd > 0)
-            serverLog(LL_NOTICE,"The server is now ready to accept connections at %s", server.unixsocket);
-    } else {
-        sentinelIsRunning();
-    }
+    serverLog(LL_WARNING,"Server started, Redis version " REDIS_VERSION);
+#ifdef __linux__
+    linuxMemoryWarnings();
+#endif
+    moduleLoadFromQueue();
+    loadDataFromDisk();
+    if (server.ipfd_count > 0)
+        serverLog(LL_NOTICE,"The server is now ready to accept connections on port %d", server.port);
+    if (server.sofd > 0)
+        serverLog(LL_NOTICE,"The server is now ready to accept connections at %s", server.unixsocket);
 
     /* Warning the user about suspicious maxmemory setting. */
     if (server.maxmemory > 0 && server.maxmemory < 1024*1024) {

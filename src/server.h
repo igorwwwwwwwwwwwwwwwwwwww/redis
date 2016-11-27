@@ -135,24 +135,6 @@ typedef long long mstime_t; /* millisecond time type. */
 /* Hash table parameters */
 #define HASHTABLE_MIN_FILL        10      /* Minimal hash table fill 10% */
 
-/* Command flags. Please check the command table defined in the redis.c file
- * for more information about the meaning of every flag. */
-#define CMD_WRITE (1<<0)            /* "w" flag */
-#define CMD_READONLY (1<<1)         /* "r" flag */
-#define CMD_DENYOOM (1<<2)          /* "m" flag */
-#define CMD_MODULE (1<<3)           /* Command exported by module. */
-#define CMD_ADMIN (1<<4)            /* "a" flag */
-#define CMD_PUBSUB (1<<5)           /* "p" flag */
-#define CMD_NOSCRIPT (1<<6)         /* "s" flag */
-#define CMD_RANDOM (1<<7)           /* "R" flag */
-#define CMD_SORT_FOR_SCRIPT (1<<8)  /* "S" flag */
-#define CMD_LOADING (1<<9)          /* "l" flag */
-#define CMD_STALE (1<<10)           /* "t" flag */
-#define CMD_SKIP_MONITOR (1<<11)    /* "M" flag */
-#define CMD_ASKING (1<<12)          /* "k" flag */
-#define CMD_FAST (1<<13)            /* "F" flag */
-#define CMD_MODULE_GETKEYS (1<<14)  /* Use the modules getkeys interface. */
-
 /* AOF states */
 #define AOF_OFF 0             /* AOF is off */
 #define AOF_ON 1              /* AOF is on */
@@ -645,8 +627,6 @@ struct redisCommand {
     char *name;
     redisCommandProc *proc;
     int arity;
-    char *sflags; /* Flags as string representation, one char per flag. */
-    int flags;    /* The actual flags, obtained from the 'sflags' field. */
     /* What keys should be loaded in background when calling this command? */
     int firstkey; /* The first argument that's a key (0 = no keys) */
     int lastkey;  /* The last argument that's a key */

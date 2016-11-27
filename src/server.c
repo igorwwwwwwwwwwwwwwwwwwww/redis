@@ -84,45 +84,12 @@ struct redisServer server; /* server global state */
  *           in MSET the step is two since arguments are key,val,key,val,...
  * microseconds: microseconds of total execution time for this command.
  * calls: total number of calls of this command.
- *
- * The flags, microseconds and calls fields are computed by Redis and should
- * always be set to zero.
- *
- * Command flags are expressed using strings where every character represents
- * a flag. Later the populateCommandTable() function will take care of
- * populating the real 'flags' field using this characters.
- *
- * This is the meaning of the flags:
- *
- * w: write command (may modify the key space).
- * r: read command  (will never modify the key space).
- * m: may increase memory usage once called. Don't allow if out of memory.
- * a: admin command, like SAVE or SHUTDOWN.
- * p: Pub/Sub related command.
- * f: force replication of this command, regardless of server.dirty.
- * s: command not allowed in scripts.
- * R: random command. Command is not deterministic, that is, the same command
- *    with the same arguments, with the same key space, may have different
- *    results. For instance SPOP and RANDOMKEY are two random commands.
- * S: Sort command output array if called from script, so that the output
- *    is deterministic.
- * l: Allow command while loading the database.
- * t: Allow command while a slave has stale data but is not allowed to
- *    server this data. Normally no command is accepted in this condition
- *    but just a few.
- * M: Do not automatically propagate the command on MONITOR.
- * k: Perform an implicit ASKING for this command, so the command will be
- *    accepted in cluster mode if the slot is marked as 'importing'.
- * F: Fast command: O(1) or O(log(N)) command that should never delay
- *    its execution as long as the kernel scheduler is giving us time.
- *    Note that commands that may trigger a DEL as a side effect (like SET)
- *    are not fast commands.
  */
 struct redisCommand redisCommandTable[] = {
-    {"get",getCommand,2,"rF",0,1,1,1,0,0},
-    {"set",setCommand,-3,"wm",0,1,1,1,0,0},
-    {"del",delCommand,-2,"w",0,1,-1,1,0,0},
-    {"info",infoCommand,-1,"lt",0,0,0,0,0,0}
+    {"get",getCommand,2,1,1,1,0,0},
+    {"set",setCommand,-3,1,1,1,0,0},
+    {"del",delCommand,-2,1,-1,1,0,0},
+    {"info",infoCommand,-1,0,0,0,0,0}
 };
 
 /*============================ Utility functions ============================ */
@@ -1271,28 +1238,7 @@ void populateCommandTable(void) {
 
     for (j = 0; j < numcommands; j++) {
         struct redisCommand *c = redisCommandTable+j;
-        char *f = c->sflags;
         int retval1, retval2;
-
-        while(*f != '\0') {
-            switch(*f) {
-            case 'w': c->flags |= CMD_WRITE; break;
-            case 'r': c->flags |= CMD_READONLY; break;
-            case 'm': c->flags |= CMD_DENYOOM; break;
-            case 'a': c->flags |= CMD_ADMIN; break;
-            case 'p': c->flags |= CMD_PUBSUB; break;
-            case 's': c->flags |= CMD_NOSCRIPT; break;
-            case 'R': c->flags |= CMD_RANDOM; break;
-            case 'S': c->flags |= CMD_SORT_FOR_SCRIPT; break;
-            case 'l': c->flags |= CMD_LOADING; break;
-            case 't': c->flags |= CMD_STALE; break;
-            case 'M': c->flags |= CMD_SKIP_MONITOR; break;
-            case 'k': c->flags |= CMD_ASKING; break;
-            case 'F': c->flags |= CMD_FAST; break;
-            default: serverPanic("Unsupported command flag"); break;
-            }
-            f++;
-        }
 
         retval1 = dictAdd(server.commands, sdsnew(c->name), c);
         /* Populate an additional dictionary that will be unaffected
@@ -1537,83 +1483,6 @@ void pingCommand(client *c) {
 
 void echoCommand(client *c) {
     addReplyBulk(c,c->argv[1]);
-}
-
-void timeCommand(client *c) {
-    struct timeval tv;
-
-    /* gettimeofday() can only fail if &tv is a bad address so we
-     * don't check for errors. */
-    gettimeofday(&tv,NULL);
-    addReplyMultiBulkLen(c,2);
-    addReplyBulkLongLong(c,tv.tv_sec);
-    addReplyBulkLongLong(c,tv.tv_usec);
-}
-
-/* Helper function for addReplyCommand() to output flags. */
-int addReplyCommandFlag(client *c, struct redisCommand *cmd, int f, char *reply) {
-    if (cmd->flags & f) {
-        addReplyStatus(c, reply);
-        return 1;
-    }
-    return 0;
-}
-
-/* Output the representation of a Redis command. Used by the COMMAND command. */
-void addReplyCommand(client *c, struct redisCommand *cmd) {
-    if (!cmd) {
-        addReply(c, shared.nullbulk);
-    } else {
-        /* We are adding: command name, arg count, flags, first, last, offset */
-        addReplyMultiBulkLen(c, 6);
-        addReplyBulkCString(c, cmd->name);
-        addReplyLongLong(c, cmd->arity);
-
-        int flagcount = 0;
-        void *flaglen = addDeferredMultiBulkLength(c);
-        flagcount += addReplyCommandFlag(c,cmd,CMD_WRITE, "write");
-        flagcount += addReplyCommandFlag(c,cmd,CMD_READONLY, "readonly");
-        flagcount += addReplyCommandFlag(c,cmd,CMD_DENYOOM, "denyoom");
-        flagcount += addReplyCommandFlag(c,cmd,CMD_ADMIN, "admin");
-        flagcount += addReplyCommandFlag(c,cmd,CMD_PUBSUB, "pubsub");
-        flagcount += addReplyCommandFlag(c,cmd,CMD_NOSCRIPT, "noscript");
-        flagcount += addReplyCommandFlag(c,cmd,CMD_RANDOM, "random");
-        flagcount += addReplyCommandFlag(c,cmd,CMD_SORT_FOR_SCRIPT,"sort_for_script");
-        flagcount += addReplyCommandFlag(c,cmd,CMD_LOADING, "loading");
-        flagcount += addReplyCommandFlag(c,cmd,CMD_STALE, "stale");
-        flagcount += addReplyCommandFlag(c,cmd,CMD_SKIP_MONITOR, "skip_monitor");
-        flagcount += addReplyCommandFlag(c,cmd,CMD_ASKING, "asking");
-        flagcount += addReplyCommandFlag(c,cmd,CMD_FAST, "fast");
-        setDeferredMultiBulkLength(c, flaglen, flagcount);
-
-        addReplyLongLong(c, cmd->firstkey);
-        addReplyLongLong(c, cmd->lastkey);
-        addReplyLongLong(c, cmd->keystep);
-    }
-}
-
-/* COMMAND <subcommand> <args> */
-void commandCommand(client *c) {
-    dictIterator *di;
-    dictEntry *de;
-
-    if (c->argc == 1) {
-        addReplyMultiBulkLen(c, dictSize(server.commands));
-        di = dictGetIterator(server.commands);
-        while ((de = dictNext(di)) != NULL) {
-            addReplyCommand(c, dictGetVal(de));
-        }
-        dictReleaseIterator(di);
-    } else if (!strcasecmp(c->argv[1]->ptr, "info")) {
-        int i;
-        addReplyMultiBulkLen(c, c->argc-2);
-        for (i = 2; i < c->argc; i++) {
-            addReplyCommand(c, dictFetchValue(server.commands, c->argv[i]->ptr));
-        }
-    } else {
-        addReplyError(c, "Unknown subcommand or wrong number of arguments.");
-        return;
-    }
 }
 
 /* Convert an amount of bytes into a human readable string in the form

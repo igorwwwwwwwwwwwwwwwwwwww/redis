@@ -135,7 +135,6 @@ void computeDatasetDigest(unsigned char *final) {
         while((de = dictNext(di)) != NULL) {
             sds key;
             robj *keyobj, *o;
-            long long expiretime;
 
             memset(digest,0,20); /* This key-val digest */
             key = dictGetKey(de);
@@ -147,7 +146,6 @@ void computeDatasetDigest(unsigned char *final) {
 
             aux = htonl(o->type);
             mixDigest(digest,&aux,sizeof(aux));
-            expiretime = getExpire(db,keyobj);
 
             /* Save the key and associated value */
             if (o->type == OBJ_STRING) {
@@ -155,8 +153,6 @@ void computeDatasetDigest(unsigned char *final) {
             } else {
                 serverPanic("Unknown object type");
             }
-            /* If the key has an expire, add it to the mix */
-            if (expiretime != -1) xorDigest(digest,"!!expire!!",10);
             /* We can finally xor the key-val digest to the final digest */
             xorDigest(final,digest,20);
             decrRefCount(keyobj);
@@ -219,8 +215,8 @@ void debugCommand(client *c) {
             if (delay < 0) delay = 0;
         }
         int flags = !strcasecmp(c->argv[1]->ptr,"restart") ?
-            (RESTART_SERVER_GRACEFULLY|RESTART_SERVER_CONFIG_REWRITE) :
-             RESTART_SERVER_NONE;
+            RESTART_SERVER_GRACEFULLY :
+            RESTART_SERVER_NONE;
         restartServer(flags,delay);
         addReplyError(c,"failed to restart the server. Check server logs.");
     } else if (!strcasecmp(c->argv[1]->ptr,"oom")) {

@@ -103,32 +103,12 @@ client *createClient(int fd) {
     c->sentlen = 0;
     c->flags = 0;
     c->ctime = c->lastinteraction = server.unixtime;
-    c->replstate = REPL_STATE_NONE;
-    c->repl_put_online_on_ack = 0;
-    c->reploff = 0;
-    c->repl_ack_off = 0;
-    c->repl_ack_time = 0;
-    c->slave_listening_port = 0;
-    c->slave_ip[0] = '\0';
-    c->slave_capa = SLAVE_CAPA_NONE;
     c->reply = listCreate();
     c->reply_bytes = 0;
     c->obuf_soft_limit_reached_time = 0;
     listSetFreeMethod(c->reply,freeClientReplyValue);
     listSetDupMethod(c->reply,dupClientReplyValue);
-    c->btype = BLOCKED_NONE;
-    c->bpop.timeout = 0;
-    c->bpop.keys = dictCreate(&objectKeyPointerValueDictType,NULL);
-    c->bpop.target = NULL;
-    c->bpop.numreplicas = 0;
-    c->bpop.reploffset = 0;
-    c->woff = 0;
-    c->watched_keys = listCreate();
-    c->pubsub_channels = dictCreate(&objectKeyPointerValueDictType,NULL);
-    c->pubsub_patterns = listCreate();
     c->peerid = NULL;
-    listSetFreeMethod(c->pubsub_patterns,decrRefCountVoid);
-    listSetMatchMethod(c->pubsub_patterns,listMatchObjects);
     if (fd != -1) listAddNodeTail(server.clients,c);
     return c;
 }
@@ -149,35 +129,19 @@ client *createClient(int fd) {
  *
  * 1) The event handler should already be installed since the output buffer
  *    already contains something.
- * 2) The client is a slave but not yet online, so we want to just accumulate
- *    writes in the buffer but not actually sending them yet.
  *
  * Typically gets called every time a reply is built, before adding more
  * data to the clients output buffers. If the function returns C_ERR no
  * data should be appended to the output buffers. */
 int prepareClientToWrite(client *c) {
-    /* If it's the Lua client we always return ok without installing any
-     * handler since there is no socket at all. */
-    if (c->flags & (CLIENT_LUA|CLIENT_MODULE)) return C_OK;
-
     /* CLIENT REPLY OFF / SKIP handling: don't send replies. */
     if (c->flags & (CLIENT_REPLY_OFF|CLIENT_REPLY_SKIP)) return C_ERR;
 
-    /* Masters don't receive replies, unless CLIENT_MASTER_FORCE_REPLY flag
-     * is set. */
-    if ((c->flags & CLIENT_MASTER) &&
-        !(c->flags & CLIENT_MASTER_FORCE_REPLY)) return C_ERR;
-
-    if (c->fd <= 0) return C_ERR; /* Fake client for AOF loading. */
-
     /* Schedule the client to write the output buffers to the socket only
      * if not already done (there were no pending writes already and the client
-     * was yet not flagged), and, for slaves, if the slave can actually
-     * receive writes at this stage. */
+     * was yet not flagged). */
     if (!clientHasPendingReplies(c) &&
-        !(c->flags & CLIENT_PENDING_WRITE) &&
-        (c->replstate == REPL_STATE_NONE ||
-         (c->replstate == SLAVE_STATE_ONLINE && !c->repl_put_online_on_ack)))
+        !(c->flags & CLIENT_PENDING_WRITE))
     {
         /* Here instead of installing the write handler, we just flag the
          * client and put it into a list of clients that have something
@@ -712,16 +676,6 @@ static void freeClientArgv(client *c) {
     c->cmd = NULL;
 }
 
-/* Close all the slaves connections. This is useful in chained replication
- * when we resync with our own master and want to force all our slaves to
- * resync with us as well. */
-void disconnectSlaves(void) {
-    while (listLength(server.slaves)) {
-        listNode *ln = listFirst(server.slaves);
-        freeClient((client*)ln->value);
-    }
-}
-
 /* Remove the specified client from global lists where the client could
  * be referenced, not including the Pub/Sub channels.
  * This is used by freeClient(). */
@@ -772,13 +726,6 @@ void freeClient(client *c) {
     sdsfree(c->querybuf);
     c->querybuf = NULL;
 
-    /* Deallocate structures used to block on blocking ops. */
-    dictRelease(c->bpop.keys);
-
-    /* Unsubscribe from all the pubsub channels */
-    dictRelease(c->pubsub_channels);
-    listRelease(c->pubsub_patterns);
-
     /* Free data structures. */
     listRelease(c->reply);
     freeClientArgv(c);
@@ -809,7 +756,7 @@ void freeClient(client *c) {
  * a context where calling freeClient() is not possible, because the client
  * should be valid for the continuation of the flow of the program. */
 void freeClientAsync(client *c) {
-    if (c->flags & CLIENT_CLOSE_ASAP || c->flags & CLIENT_LUA) return;
+    if (c->flags & CLIENT_CLOSE_ASAP) return;
     c->flags |= CLIENT_CLOSE_ASAP;
     listAddNodeTail(server.clients_to_close,c);
 }
@@ -883,13 +830,6 @@ int writeToClient(int fd, client *c, int handler_installed) {
             freeClient(c);
             return C_ERR;
         }
-    }
-    if (totwritten > 0) {
-        /* For clients representing masters we don't count sending data
-         * as an interaction, since we always send REPLCONF ACK commands
-         * that take some time to just fill the socket output buffer.
-         * We just rely on data / pings received for timeout detection. */
-        if (!(c->flags & CLIENT_MASTER)) c->lastinteraction = server.unixtime;
     }
     if (!clientHasPendingReplies(c)) {
         c->sentlen = 0;
@@ -991,12 +931,6 @@ int processInlineBuffer(client *c) {
         setProtocolError("unbalanced quotes in inline request",c,0);
         return C_ERR;
     }
-
-    /* Newline from slaves can be used to refresh the last ACK time.
-     * This is useful for a slave to ping back while loading a big
-     * RDB file. */
-    if (querylen == 0 && c->flags & CLIENT_SLAVE)
-        c->repl_ack_time = server.unixtime;
 
     /* Leave data after the first line of the query in the buffer */
     sdsrange(c->querybuf,querylen+2,-1);
@@ -1194,10 +1128,7 @@ void processInputBuffer(client *c) {
     /* Keep processing while there is something in the input buffer */
     while(sdslen(c->querybuf)) {
         /* Return if clients are paused. */
-        if (!(c->flags & CLIENT_SLAVE) && clientsArePaused()) break;
-
-        /* Immediately abort if the client is in the middle of something. */
-        if (c->flags & CLIENT_BLOCKED) break;
+        if (clientsArePaused()) break;
 
         /* CLIENT_CLOSE_AFTER_REPLY closes the connection once the reply is
          * written to the client. Make sure to not let the reply grow after
@@ -1355,21 +1286,10 @@ sds catClientInfoString(sds s, client *client) {
     int emask;
 
     p = flags;
-    if (client->flags & CLIENT_SLAVE) {
-        if (client->flags & CLIENT_MONITOR)
-            *p++ = 'O';
-        else
-            *p++ = 'S';
-    }
-    if (client->flags & CLIENT_MASTER) *p++ = 'M';
-    if (client->flags & CLIENT_MULTI) *p++ = 'x';
-    if (client->flags & CLIENT_BLOCKED) *p++ = 'b';
-    if (client->flags & CLIENT_DIRTY_CAS) *p++ = 'd';
     if (client->flags & CLIENT_CLOSE_AFTER_REPLY) *p++ = 'c';
     if (client->flags & CLIENT_UNBLOCKED) *p++ = 'u';
     if (client->flags & CLIENT_CLOSE_ASAP) *p++ = 'A';
     if (client->flags & CLIENT_UNIX_SOCKET) *p++ = 'U';
-    if (client->flags & CLIENT_READONLY) *p++ = 'r';
     if (p == flags) *p++ = 'N';
     *p++ = '\0';
 
@@ -1379,7 +1299,7 @@ sds catClientInfoString(sds s, client *client) {
     if (emask & AE_WRITABLE) *p++ = 'w';
     *p = '\0';
     return sdscatfmt(s,
-        "id=%U addr=%s fd=%i name=%s age=%I idle=%I flags=%s db=%i sub=%i psub=%i multi=%i qbuf=%U qbuf-free=%U obl=%U oll=%U omem=%U events=%s cmd=%s",
+        "id=%U addr=%s fd=%i name=%s age=%I idle=%I flags=%s db=%iqbuf=%U qbuf-free=%U obl=%U oll=%U omem=%U events=%s cmd=%s",
         (unsigned long long) client->id,
         getClientPeerId(client),
         client->fd,
@@ -1388,9 +1308,6 @@ sds catClientInfoString(sds s, client *client) {
         (long long)(server.unixtime - client->lastinteraction),
         flags,
         client->db->id,
-        (int) dictSize(client->pubsub_channels),
-        (int) listLength(client->pubsub_patterns),
-        (client->flags & CLIENT_MULTI) ? client->mstate.count : -1,
         (unsigned long long) sdslen(client->querybuf),
         (unsigned long long) sdsavail(client->querybuf),
         (unsigned long long) client->bufpos,
@@ -1527,41 +1444,6 @@ unsigned long getClientOutputBufferMemoryUsage(client *c) {
     return c->reply_bytes + (list_item_size*listLength(c->reply));
 }
 
-/* Get the class of a client, used in order to enforce limits to different
- * classes of clients.
- *
- * The function will return one of the following:
- * CLIENT_TYPE_NORMAL -> Normal client
- * CLIENT_TYPE_SLAVE  -> Slave or client executing MONITOR command
- * CLIENT_TYPE_PUBSUB -> Client subscribed to Pub/Sub channels
- * CLIENT_TYPE_MASTER -> The client representing our replication master.
- */
-int getClientType(client *c) {
-    if (c->flags & CLIENT_MASTER) return CLIENT_TYPE_MASTER;
-    if ((c->flags & CLIENT_SLAVE) && !(c->flags & CLIENT_MONITOR))
-        return CLIENT_TYPE_SLAVE;
-    if (c->flags & CLIENT_PUBSUB) return CLIENT_TYPE_PUBSUB;
-    return CLIENT_TYPE_NORMAL;
-}
-
-int getClientTypeByName(char *name) {
-    if (!strcasecmp(name,"normal")) return CLIENT_TYPE_NORMAL;
-    else if (!strcasecmp(name,"slave")) return CLIENT_TYPE_SLAVE;
-    else if (!strcasecmp(name,"pubsub")) return CLIENT_TYPE_PUBSUB;
-    else if (!strcasecmp(name,"master")) return CLIENT_TYPE_MASTER;
-    else return -1;
-}
-
-char *getClientTypeName(int class) {
-    switch(class) {
-    case CLIENT_TYPE_NORMAL: return "normal";
-    case CLIENT_TYPE_SLAVE:  return "slave";
-    case CLIENT_TYPE_PUBSUB: return "pubsub";
-    case CLIENT_TYPE_MASTER: return "master";
-    default:                       return NULL;
-    }
-}
-
 /* The function checks if the client reached output buffer soft or hard
  * limit, and also update the state needed to check the soft limit as
  * a side effect.
@@ -1572,10 +1454,7 @@ int checkClientOutputBufferLimits(client *c) {
     int soft = 0, hard = 0, class;
     unsigned long used_mem = getClientOutputBufferMemoryUsage(c);
 
-    class = getClientType(c);
-    /* For the purpose of output buffer limiting, masters are handled
-     * like normal clients. */
-    if (class == CLIENT_TYPE_MASTER) class = CLIENT_TYPE_NORMAL;
+    class = CLIENT_TYPE_NORMAL;
 
     if (server.client_obuf_limits[class].hard_limit_bytes &&
         used_mem >= server.client_obuf_limits[class].hard_limit_bytes)
@@ -1665,10 +1544,6 @@ int clientsArePaused(void) {
         listRewind(server.clients,&li);
         while ((ln = listNext(&li)) != NULL) {
             c = listNodeValue(ln);
-
-            /* Don't touch slaves and blocked clients. The latter pending
-             * requests be processed when unblocked. */
-            if (c->flags & (CLIENT_SLAVE|CLIENT_BLOCKED)) continue;
             c->flags |= CLIENT_UNBLOCKED;
             listAddNodeTail(server.unblocked_clients,c);
         }

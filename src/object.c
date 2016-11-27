@@ -568,28 +568,6 @@ struct redisMemOverhead *getMemoryOverheadData(void) {
     mem_total += server.initial_memory_usage;
 
     mem = 0;
-    if (server.repl_backlog)
-        mem += zmalloc_size(server.repl_backlog);
-    mh->repl_backlog = mem;
-    mem_total += mem;
-
-    mem = 0;
-    if (listLength(server.slaves)) {
-        listIter li;
-        listNode *ln;
-
-        listRewind(server.slaves,&li);
-        while((ln = listNext(&li))) {
-            client *c = listNodeValue(ln);
-            mem += getClientOutputBufferMemoryUsage(c);
-            mem += sdsAllocSize(c->querybuf);
-            mem += sizeof(client);
-        }
-    }
-    mh->clients_slaves = mem;
-    mem_total+=mem;
-
-    mem = 0;
     if (listLength(server.clients)) {
         listIter li;
         listNode *ln;
@@ -597,8 +575,6 @@ struct redisMemOverhead *getMemoryOverheadData(void) {
         listRewind(server.clients,&li);
         while((ln = listNext(&li))) {
             client *c = listNodeValue(ln);
-            if (c->flags & CLIENT_SLAVE)
-                continue;
             mem += getClientOutputBufferMemoryUsage(c);
             mem += sdsAllocSize(c->querybuf);
             mem += sizeof(client);
@@ -659,7 +635,6 @@ sds getMemoryDoctorReport(void) {
     int empty = 0;          /* Instance is empty or almost empty. */
     int big_peak = 0;       /* Memory peak is much larger than used mem. */
     int high_frag = 0;      /* High fragmentation. */
-    int big_slave_buf = 0;  /* Slave buffers are too big. */
     int big_client_buf = 0; /* Client buffers are too big. */
     int num_reports = 0;
     struct redisMemOverhead *mh = getMemoryOverheadData();
@@ -681,16 +656,9 @@ sds getMemoryDoctorReport(void) {
         }
 
         /* Clients using more than 200k each average? */
-        long numslaves = listLength(server.slaves);
-        long numclients = listLength(server.clients)-numslaves;
+        long numclients = listLength(server.clients);
         if (mh->clients_normal / numclients > (1024*200)) {
             big_client_buf = 1;
-            num_reports++;
-        }
-
-        /* Slaves using more than 10 MB each? */
-        if (mh->clients_slaves / numslaves > (1024*1024*10)) {
-            big_slave_buf = 1;
             num_reports++;
         }
     }
@@ -714,9 +682,6 @@ sds getMemoryDoctorReport(void) {
         }
         if (high_frag) {
             s = sdscatprintf(s," * High fragmentation: This instance has a memory fragmentation greater than 1.4 (this means that the Resident Set Size of the Redis process is much larger than the sum of the logical allocations Redis performed). This problem is usually due either to a large peak memory (check if there is a peak memory entry above in the report) or may result from a workload that causes the allocator to fragment memory a lot. If the problem is a large peak memory, then there is no issue. Otherwise, make sure you are using the Jemalloc allocator and not the default libc malloc. Note: The currently used allocator is \"%s\".\n\n", ZMALLOC_LIB);
-        }
-        if (big_slave_buf) {
-            s = sdscat(s," * Big slave buffers: The slave output buffers in this instance are greater than 10MB for each slave (on average). This likely means that there is some slave instance that is struggling receiving data, either because it is too slow or because of networking issues. As a result, data piles on the master output buffers. Please try to identify what slave is not receiving data correctly and why. You can use the INFO output in order to check the slaves delays and the CLIENT LIST command to check the output buffers of each slave.\n\n");
         }
         if (big_client_buf) {
             s = sdscat(s," * Big client buffers: The clients output buffers in this instance are greater than 200K per client (on average). This may result from different causes, like Pub/Sub clients subscribed to channels bot not receiving data fast enough, so that data piles on the Redis instance output buffer, or clients sending commands with large replies or very large sequences of commands in the same pipeline. Please use the CLIENT LIST command in order to investigate the issue if it causes problems in your instance, or to understand better why certain clients are using a big amount of memory.\n\n");
@@ -758,10 +723,6 @@ void objectCommand(client *c) {
         if ((o = objectCommandLookupOrReply(c,c->argv[2],shared.nullbulk))
                 == NULL) return;
         addReplyBulkCString(c,strEncoding(o->encoding));
-    } else if (!strcasecmp(c->argv[1]->ptr,"freq") && c->argc == 3) {
-        if ((o = objectCommandLookupOrReply(c,c->argv[2],shared.nullbulk))
-                == NULL) return;
-        addReplyLongLong(c,o->lru&255);
     } else {
         addReplyError(c,"Syntax error. Try OBJECT (refcount|encoding|idletime|freq)");
     }

@@ -872,14 +872,9 @@ int writeToClient(int fd, client *c, int handler_installed) {
          * bytes, in a single threaded server it's a good idea to serve
          * other clients as well, even if a very large request comes from
          * super fast link that is always able to accept data (in real world
-         * scenario think about 'KEYS *' against the loopback interface).
-         *
-         * However if we are over the maxmemory limit we ignore that and
-         * just deliver as much data as it is possible to deliver. */
+         * scenario think about 'KEYS *' against the loopback interface). */
         server.stat_net_output_bytes += totwritten;
-        if (totwritten > NET_MAX_WRITES_PER_EVENT &&
-            (server.maxmemory == 0 ||
-             zmalloc_used_memory() < server.maxmemory)) break;
+        if (totwritten > NET_MAX_WRITES_PER_EVENT) break;
     }
     if (nwritten == -1) {
         if (errno == EAGAIN) {
@@ -1629,35 +1624,6 @@ void asyncCloseClientOnOutputBufferLimitReached(client *c) {
         freeClientAsync(c);
         serverLog(LL_WARNING,"Client %s scheduled to be closed ASAP for overcoming of output buffer limits.", client);
         sdsfree(client);
-    }
-}
-
-/* Helper function used by freeMemoryIfNeeded() in order to flush slaves
- * output buffers without returning control to the event loop.
- * This is also called by SHUTDOWN for a best-effort attempt to send
- * slaves the latest writes. */
-void flushSlavesOutputBuffers(void) {
-    listIter li;
-    listNode *ln;
-
-    listRewind(server.slaves,&li);
-    while((ln = listNext(&li))) {
-        client *slave = listNodeValue(ln);
-        int events;
-
-        /* Note that the following will not flush output buffers of slaves
-         * in STATE_ONLINE but having put_online_on_ack set to true: in this
-         * case the writable event is never installed, since the purpose
-         * of put_online_on_ack is to postpone the moment it is installed.
-         * This is what we want since slaves in this state should not receive
-         * writes before the first ACK. */
-        events = aeGetFileEvents(server.el,slave->fd);
-        if (events & AE_WRITABLE &&
-            slave->replstate == SLAVE_STATE_ONLINE &&
-            clientHasPendingReplies(slave))
-        {
-            writeToClient(slave->fd,slave,0);
-        }
     }
 }
 

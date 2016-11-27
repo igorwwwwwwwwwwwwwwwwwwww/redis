@@ -40,26 +40,11 @@
 /* Low level key lookup API, not actually called directly from commands
  * implementations that should instead rely on lookupKeyRead(),
  * lookupKeyWrite() and lookupKeyReadWithFlags(). */
-robj *lookupKey(redisDb *db, robj *key, int flags) {
+robj *lookupKey(redisDb *db, robj *key) {
     dictEntry *de = dictFind(db->dict,key->ptr);
     if (de) {
         robj *val = dictGetVal(de);
 
-        /* Update the access time for the ageing algorithm.
-         * Don't do it if we have a saving child, as this will trigger
-         * a copy on write madness. */
-        if (server.rdb_child_pid == -1 &&
-            server.aof_child_pid == -1 &&
-            !(flags & LOOKUP_NOTOUCH))
-        {
-            if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) {
-                unsigned long ldt = val->lru >> 8;
-                unsigned long counter = LFULogIncr(val->lru & 255);
-                val->lru = (ldt << 8) | counter;
-            } else {
-                val->lru = LRU_CLOCK();
-            }
-        }
         return val;
     } else {
         return NULL;
@@ -87,7 +72,7 @@ robj *lookupKey(redisDb *db, robj *key, int flags) {
  * for read operations. Even if the key expiry is master-driven, we can
  * correctly report a key is expired on slaves even if the master is lagging
  * expiring our key via DELs in the replication link. */
-robj *lookupKeyReadWithFlags(redisDb *db, robj *key, int flags) {
+robj *lookupKeyReadWithFlags(redisDb *db, robj *key) {
     robj *val;
 
     if (expireIfNeeded(db,key) == 1) {
@@ -116,7 +101,7 @@ robj *lookupKeyReadWithFlags(redisDb *db, robj *key, int flags) {
             return NULL;
         }
     }
-    val = lookupKey(db,key,flags);
+    val = lookupKey(db,key);
     if (val == NULL)
         server.stat_keyspace_misses++;
     else
@@ -127,7 +112,7 @@ robj *lookupKeyReadWithFlags(redisDb *db, robj *key, int flags) {
 /* Like lookupKeyReadWithFlags(), but does not use any flag, which is the
  * common case. */
 robj *lookupKeyRead(redisDb *db, robj *key) {
-    return lookupKeyReadWithFlags(db,key,LOOKUP_NONE);
+    return lookupKeyReadWithFlags(db,key);
 }
 
 /* Lookup a key for write operations, and as a side effect, if needed, expires
@@ -137,7 +122,7 @@ robj *lookupKeyRead(redisDb *db, robj *key) {
  * does not exist in the specified DB. */
 robj *lookupKeyWrite(redisDb *db, robj *key) {
     expireIfNeeded(db,key);
-    return lookupKey(db,key,LOOKUP_NONE);
+    return lookupKey(db,key);
 }
 
 robj *lookupKeyReadOrReply(client *c, robj *key, robj *reply) {
@@ -172,14 +157,7 @@ void dbOverwrite(redisDb *db, robj *key, robj *val) {
     dictEntry *de = dictFind(db->dict,key->ptr);
 
     serverAssertWithInfo(NULL,key,de != NULL);
-    if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) {
-        robj *old = dictGetVal(de);
-        int saved_lru = old->lru;
-        dictReplace(db->dict, key->ptr, val);
-        val->lru = saved_lru;
-    } else {
-        dictReplace(db->dict, key->ptr, val);
-    }
+    dictReplace(db->dict, key->ptr, val);
 }
 
 /* High level Set operation. This function can be used in order to set
@@ -701,7 +679,7 @@ void typeCommand(client *c) {
     robj *o;
     char *type;
 
-    o = lookupKeyReadWithFlags(c->db,c->argv[1],LOOKUP_NOTOUCH);
+    o = lookupKeyReadWithFlags(c->db,c->argv[1]);
     if (o == NULL) {
         type = "none";
     } else {

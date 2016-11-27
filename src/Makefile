@@ -127,7 +127,7 @@ QUIET_INSTALL = @printf '    %b %b\n' $(LINKCOLOR)INSTALL$(ENDCOLOR) $(BINCOLOR)
 endif
 
 REDIS_SERVER_NAME=redis-server
-REDIS_SERVER_OBJ=adlist.o ae.o anet.o dict.o server.o sds.o zmalloc.o lzf_c.o lzf_d.o pqsort.o zipmap.o sha1.o ziplist.o release.o networking.o util.o object.o db.o t_string.o config.o debug.o intset.o syncio.o crc16.o endianconv.o slowlog.o bio.o rio.o rand.o memtest.o crc64.o latency.o sparkline.o lazyfree.o evict.o
+REDIS_SERVER_OBJ=adlist.o ae.o anet.o dict.o server.o sds.o zmalloc.o lzf_c.o lzf_d.o pqsort.o zipmap.o sha1.o ziplist.o release.o networking.o util.o object.o db.o t_string.o config.o debug.o intset.o syncio.o crc16.o endianconv.o slowlog.o bio.o rio.o rand.o memtest.o crc64.o latency.o sparkline.o lazyfree.o
 REDIS_CLI_NAME=redis-cli
 REDIS_CLI_OBJ=anet.o adlist.o redis-cli.o zmalloc.o release.o anet.o ae.o crc64.o
 REDIS_BENCHMARK_NAME=redis-benchmark

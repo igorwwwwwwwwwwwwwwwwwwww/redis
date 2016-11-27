@@ -245,14 +245,11 @@ void debugCommand(client *c) {
         val = dictGetVal(de);
         strenc = strEncoding(val->encoding);
 
-        char extra[128] = {0};
         addReplyStatusFormat(c,
             "Value at:%p refcount:%d "
-            "encoding:%s "
-            "lru:%d lru_seconds_idle:%llu%s",
+            "encoding:%s ",
             (void*)val, val->refcount,
-            strenc,
-            val->lru, estimateObjectIdleTime(val)/1000, extra);
+            strenc);
     } else if (!strcasecmp(c->argv[1]->ptr,"sdslen") && c->argc == 3) {
         dictEntry *de;
         robj *val;

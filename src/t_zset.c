@@ -1605,10 +1605,6 @@ cleanup:
     }
 }
 
-void zaddCommand(client *c) {
-    zaddGenericCommand(c,ZADD_NONE);
-}
-
 void zincrbyCommand(client *c) {
     zaddGenericCommand(c,ZADD_INCR);
 }

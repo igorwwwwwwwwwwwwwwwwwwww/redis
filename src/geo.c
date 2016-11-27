@@ -161,7 +161,7 @@ double extractDistanceOrReply(client *c, robj **argv,
         addReplyError(c,"radius cannot be negative");
         return -1;
     }
-    
+
     double to_meters = extractUnitOrReply(c,argv[1]);
     if (to_meters < 0) {
         return -1;
@@ -422,7 +422,6 @@ void geoaddCommand(client *c) {
 
     /* Finally call ZADD that will do the work for us. */
     replaceClientCommandVector(c,argc,argv);
-    zaddCommand(c);
 }
 
 #define SORT_NONE 0

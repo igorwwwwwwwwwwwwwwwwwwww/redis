@@ -127,13 +127,11 @@ QUIET_INSTALL = @printf '    %b %b\n' $(LINKCOLOR)INSTALL$(ENDCOLOR) $(BINCOLOR)
 endif
 
 REDIS_SERVER_NAME=redis-server
-REDIS_SERVER_OBJ=adlist.o ae.o anet.o dict.o server.o sds.o zmalloc.o lzf_c.o lzf_d.o pqsort.o zipmap.o sha1.o ziplist.o release.o networking.o util.o object.o db.o t_string.o config.o debug.o intset.o syncio.o crc16.o endianconv.o rand.o memtest.o crc64.o sparkline.o
+REDIS_SERVER_OBJ=adlist.o ae.o anet.o dict.o server.o sds.o zmalloc.o sha1.o release.o networking.o util.o object.o db.o t_string.o config.o debug.o crc64.o
 REDIS_CLI_NAME=redis-cli
 REDIS_CLI_OBJ=anet.o adlist.o redis-cli.o zmalloc.o release.o anet.o ae.o crc64.o
-REDIS_BENCHMARK_NAME=redis-benchmark
-REDIS_BENCHMARK_OBJ=ae.o anet.o redis-benchmark.o adlist.o zmalloc.o redis-benchmark.o
 
-all: $(REDIS_SERVER_NAME) $(REDIS_CLI_NAME) $(REDIS_BENCHMARK_NAME)
+all: $(REDIS_SERVER_NAME) $(REDIS_CLI_NAME)
 	@echo ""
 	@echo "Hint: It's a good idea to run 'make test' ;)"
 	@echo ""
@@ -183,13 +181,6 @@ $(REDIS_SERVER_NAME): $(REDIS_SERVER_OBJ)
 $(REDIS_CLI_NAME): $(REDIS_CLI_OBJ)
 	$(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/linenoise/linenoise.o $(FINAL_LIBS)
 
-# redis-benchmark
-$(REDIS_BENCHMARK_NAME): $(REDIS_BENCHMARK_OBJ)
-	$(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a $(FINAL_LIBS)
-
-dict-benchmark: dict.c zmalloc.c sds.c
-	$(REDIS_CC) $(FINAL_CFLAGS) dict.c zmalloc.c sds.c -D DICT_BENCHMARK_MAIN -o dict-benchmark
-
 # Because the jemalloc.h header is generated as a part of the jemalloc build,
 # building it should complete before building any other object. Instead of
 # depending on a single artifact, build all dependencies first.
@@ -197,7 +188,7 @@ dict-benchmark: dict.c zmalloc.c sds.c
 	$(REDIS_CC) -c $<
 
 clean:
-	rm -rf $(REDIS_SERVER_NAME) $(REDIS_CLI_NAME) $(REDIS_BENCHMARK_NAME) *.o *.gcda *.gcno *.gcov redis.info lcov-html Makefile.dep dict-benchmark
+	rm -rf $(REDIS_SERVER_NAME) $(REDIS_CLI_NAME) *.o *.gcda *.gcno *.gcov redis.info lcov-html Makefile.dep
 
 .PHONY: clean
 
@@ -224,9 +215,6 @@ test-sds: sds.c sds.h
 
 .PHONY: lcov
 
-bench: $(REDIS_BENCHMARK_NAME)
-	./$(REDIS_BENCHMARK_NAME)
-
 32bit:
 	@echo ""
 	@echo "WARNING: if it fails under Linux you probably need to install libc6-dev-i386"
@@ -248,5 +236,4 @@ src/help.h:
 install: all
 	@mkdir -p $(INSTALL_BIN)
 	$(REDIS_INSTALL) $(REDIS_SERVER_NAME) $(INSTALL_BIN)
-	$(REDIS_INSTALL) $(REDIS_BENCHMARK_NAME) $(INSTALL_BIN)
 	$(REDIS_INSTALL) $(REDIS_CLI_NAME) $(INSTALL_BIN)

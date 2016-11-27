@@ -1,7 +1,6 @@
 .*.swp
 *.o
 *.log
-redis-benchmark
 redis-cli
 redis-server
 doc-tools

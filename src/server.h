@@ -55,16 +55,11 @@ typedef long long mstime_t; /* millisecond time type. */
 #include "adlist.h"  /* Linked lists */
 #include "zmalloc.h" /* total memory usage aware version of malloc/free */
 #include "anet.h"    /* Networking the easy way */
-#include "ziplist.h" /* Compact list data structure */
-#include "intset.h"  /* Compact integer set structure */
 #include "version.h" /* Version macro */
 #include "util.h"    /* Misc functions useful in many places */
-#include "sparkline.h" /* ASCII graphs API */
 
 /* Following includes allow test functions to be called from Redis main() */
-#include "zipmap.h"
 #include "sha1.h"
-#include "endianconv.h"
 #include "crc64.h"
 
 /* Error codes */
@@ -929,7 +924,6 @@ void enableWatchdog(int period);
 void disableWatchdog(void);
 void watchdogScheduleSignal(int period);
 void serverLogHexDump(int level, char *descr, void *value, size_t len);
-int memtest_preserving_test(unsigned long *m, size_t bytes, int passes);
 
 #define redisDebug(fmt, ...) \
     printf("DEBUG %s:%d > " fmt "\n", __FILE__, __LINE__, __VA_ARGS__)

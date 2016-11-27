@@ -71,13 +71,6 @@ configEnum supervised_mode_enum[] = {
     {NULL, 0}
 };
 
-configEnum aof_fsync_enum[] = {
-    {"everysec", AOF_FSYNC_EVERYSEC},
-    {"always", AOF_FSYNC_ALWAYS},
-    {"no", AOF_FSYNC_NO},
-    {NULL, 0}
-};
-
 /* Output buffer limits presets. */
 clientBufferLimitsConfig clientBufferLimitsDefaults[CLIENT_TYPE_OBUF_COUNT] = {
     {0, 0, 0}, /* normal */
@@ -341,33 +334,6 @@ void loadServerConfigFromString(char *config) {
             server.client_obuf_limits[class].hard_limit_bytes = hard;
             server.client_obuf_limits[class].soft_limit_bytes = soft;
             server.client_obuf_limits[class].soft_limit_seconds = soft_seconds;
-        } else if (!strcasecmp(argv[0],"stop-writes-on-bgsave-error") &&
-                   argc == 2) {
-            if ((server.stop_writes_on_bgsave_err = yesnotoi(argv[1])) == -1) {
-                err = "argument must be 'yes' or 'no'"; goto loaderr;
-            }
-        } else if (!strcasecmp(argv[0],"slave-priority") && argc == 2) {
-            server.slave_priority = atoi(argv[1]);
-        } else if (!strcasecmp(argv[0],"slave-announce-ip") && argc == 2) {
-            zfree(server.slave_announce_ip);
-            server.slave_announce_ip = zstrdup(argv[1]);
-        } else if (!strcasecmp(argv[0],"slave-announce-port") && argc == 2) {
-            server.slave_announce_port = atoi(argv[1]);
-            if (server.slave_announce_port < 0 ||
-                server.slave_announce_port > 65535)
-            {
-                err = "Invalid port"; goto loaderr;
-            }
-        } else if (!strcasecmp(argv[0],"min-slaves-to-write") && argc == 2) {
-            server.repl_min_slaves_to_write = atoi(argv[1]);
-            if (server.repl_min_slaves_to_write < 0) {
-                err = "Invalid value for min-slaves-to-write."; goto loaderr;
-            }
-        } else if (!strcasecmp(argv[0],"min-slaves-max-lag") && argc == 2) {
-            server.repl_min_slaves_max_lag = atoi(argv[1]);
-            if (server.repl_min_slaves_max_lag < 0) {
-                err = "Invalid value for min-slaves-max-lag."; goto loaderr;
-            }
         } else if (!strcasecmp(argv[0],"supervised") && argc == 2) {
             server.supervised_mode =
                 configEnumGetValue(supervised_mode_enum,argv[1]);
@@ -611,26 +577,6 @@ void configSetCommand(client *c) {
     } config_set_numerical_field(
       "timeout",server.maxidletime,0,LONG_MAX) {
     } config_set_numerical_field(
-      "auto-aof-rewrite-percentage",server.aof_rewrite_perc,0,LLONG_MAX){
-    } config_set_numerical_field(
-      "auto-aof-rewrite-min-size",server.aof_rewrite_min_size,0,LLONG_MAX) {
-    } config_set_numerical_field(
-      "hash-max-ziplist-entries",server.hash_max_ziplist_entries,0,LLONG_MAX) {
-    } config_set_numerical_field(
-      "hash-max-ziplist-value",server.hash_max_ziplist_value,0,LLONG_MAX) {
-    } config_set_numerical_field(
-      "list-max-ziplist-size",server.list_max_ziplist_size,INT_MIN,INT_MAX) {
-    } config_set_numerical_field(
-      "list-compress-depth",server.list_compress_depth,0,INT_MAX) {
-    } config_set_numerical_field(
-      "set-max-intset-entries",server.set_max_intset_entries,0,LLONG_MAX) {
-    } config_set_numerical_field(
-      "zset-max-ziplist-entries",server.zset_max_ziplist_entries,0,LLONG_MAX) {
-    } config_set_numerical_field(
-      "zset-max-ziplist-value",server.zset_max_ziplist_value,0,LLONG_MAX) {
-    } config_set_numerical_field(
-      "hll-sparse-max-bytes",server.hll_sparse_max_bytes,0,LLONG_MAX) {
-    } config_set_numerical_field(
       "slowlog-log-slower-than",server.slowlog_log_slower_than,0,LLONG_MAX) {
     } config_set_numerical_field(
       "slowlog-max-len",ll,0,LLONG_MAX) {
@@ -655,8 +601,6 @@ void configSetCommand(client *c) {
      * config_set_enum_field(name,var,enum_var) */
     } config_set_enum_field(
       "loglevel",server.verbosity,loglevel_enum) {
-    } config_set_enum_field(
-      "appendfsync",server.aof_fsync,aof_fsync_enum) {
 
     /* Everyhing else is an error... */
     } config_set_else {
@@ -729,26 +673,6 @@ void configGetCommand(client *c) {
 
     /* Numerical values */
     config_get_numerical_field("timeout",server.maxidletime);
-    config_get_numerical_field("auto-aof-rewrite-percentage",
-            server.aof_rewrite_perc);
-    config_get_numerical_field("auto-aof-rewrite-min-size",
-            server.aof_rewrite_min_size);
-    config_get_numerical_field("hash-max-ziplist-entries",
-            server.hash_max_ziplist_entries);
-    config_get_numerical_field("hash-max-ziplist-value",
-            server.hash_max_ziplist_value);
-    config_get_numerical_field("list-max-ziplist-size",
-            server.list_max_ziplist_size);
-    config_get_numerical_field("list-compress-depth",
-            server.list_compress_depth);
-    config_get_numerical_field("set-max-intset-entries",
-            server.set_max_intset_entries);
-    config_get_numerical_field("zset-max-ziplist-entries",
-            server.zset_max_ziplist_entries);
-    config_get_numerical_field("zset-max-ziplist-value",
-            server.zset_max_ziplist_value);
-    config_get_numerical_field("hll-sparse-max-bytes",
-            server.hll_sparse_max_bytes);
     config_get_numerical_field("slowlog-log-slower-than",
             server.slowlog_log_slower_than);
     config_get_numerical_field("latency-monitor-threshold",
@@ -758,29 +682,13 @@ void configGetCommand(client *c) {
     config_get_numerical_field("port",server.port);
     config_get_numerical_field("tcp-backlog",server.tcp_backlog);
     config_get_numerical_field("databases",server.dbnum);
-    config_get_numerical_field("repl-ping-slave-period",server.repl_ping_slave_period);
-    config_get_numerical_field("repl-timeout",server.repl_timeout);
-    config_get_numerical_field("repl-backlog-size",server.repl_backlog_size);
-    config_get_numerical_field("repl-backlog-ttl",server.repl_backlog_time_limit);
     config_get_numerical_field("maxclients",server.maxclients);
     config_get_numerical_field("watchdog-period",server.watchdog_period);
-    config_get_numerical_field("slave-priority",server.slave_priority);
-    config_get_numerical_field("slave-announce-port",server.slave_announce_port);
-    config_get_numerical_field("min-slaves-to-write",server.repl_min_slaves_to_write);
-    config_get_numerical_field("min-slaves-max-lag",server.repl_min_slaves_max_lag);
     config_get_numerical_field("hz",server.hz);
     config_get_numerical_field("repl-diskless-sync-delay",server.repl_diskless_sync_delay);
     config_get_numerical_field("tcp-keepalive",server.tcpkeepalive);
 
     /* Bool (yes/no) values */
-    config_get_bool_field("no-appendfsync-on-rewrite",
-            server.aof_no_fsync_on_rewrite);
-    config_get_bool_field("slave-serve-stale-data",
-            server.repl_serve_stale_data);
-    config_get_bool_field("slave-read-only",
-            server.repl_slave_ro);
-    config_get_bool_field("stop-writes-on-bgsave-error",
-            server.stop_writes_on_bgsave_err);
     config_get_bool_field("daemonize", server.daemonize);
     config_get_bool_field("activerehashing", server.activerehashing);
     config_get_bool_field("protected-mode", server.protected_mode);
@@ -790,18 +698,11 @@ void configGetCommand(client *c) {
             server.verbosity,loglevel_enum);
     config_get_enum_field("supervised",
             server.supervised_mode,supervised_mode_enum);
-    config_get_enum_field("appendfsync",
-            server.aof_fsync,aof_fsync_enum);
     config_get_enum_field("syslog-facility",
             server.syslog_facility,syslog_facility_enum);
 
     /* Everything we can't handle with macros follows. */
 
-    if (stringmatch(pattern,"appendonly",1)) {
-        addReplyBulkCString(c,"appendonly");
-        addReplyBulkCString(c,server.aof_state == AOF_OFF ? "no" : "yes");
-        matches++;
-    }
     if (stringmatch(pattern,"dir",1)) {
         char buf[1024];
 

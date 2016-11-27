@@ -87,13 +87,6 @@
 #endif
 #endif
 
-/* Define aof_fsync to fdatasync() in Linux and fsync() for all the rest */
-#ifdef __linux__
-#define aof_fsync fdatasync
-#else
-#define aof_fsync fsync
-#endif
-
 /* Define rdb_fsync_range to sync_file_range() on Linux, otherwise we use
  * the plain fsync() call. */
 #ifdef __linux__

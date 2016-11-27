@@ -33,7 +33,6 @@
 #include "fmacros.h"
 #include "config.h"
 #include "solarisfixes.h"
-#include "rio.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -60,7 +59,6 @@ typedef long long mstime_t; /* millisecond time type. */
 #include "intset.h"  /* Compact integer set structure */
 #include "version.h" /* Version macro */
 #include "util.h"    /* Misc functions useful in many places */
-#include "latency.h" /* Latency monitor API */
 #include "sparkline.h" /* ASCII graphs API */
 
 /* Following includes allow test functions to be called from Redis main() */
@@ -96,8 +94,6 @@ typedef long long mstime_t; /* millisecond time type. */
 #define CONFIG_DEFAULT_SLOWLOG_MAX_LEN 128
 #define CONFIG_DEFAULT_MAX_CLIENTS 10000
 #define CONFIG_AUTHPASS_MAX_LEN 512
-#define CONFIG_DEFAULT_SLAVE_PRIORITY 100
-#define CONFIG_DEFAULT_REPL_TIMEOUT 60
 #define CONFIG_DEFAULT_REPL_PING_SLAVE_PERIOD 10
 #define CONFIG_RUN_ID_SIZE 40
 #define RDB_EOF_MARK_SIZE 40
@@ -392,19 +388,6 @@ typedef long long mstime_t; /* millisecond time type. */
 #define OBJ_ZSET 3
 #define OBJ_HASH 4
 
-/* The "module" object type is a special one that signals that the object
- * is one directly managed by a Redis module. In this case the value points
- * to a moduleValue struct, which contains the object value (which is only
- * handled by the module itself) and the RedisModuleType struct which lists
- * function pointers in order to serialize, deserialize, AOF-rewrite and
- * free the object.
- *
- * Inside the RDB file, module types are encoded as OBJ_MODULE followed
- * by a 64 bit module type ID, which has a 54 bits module-specific signature
- * in order to dispatch the loading to the right module, plus a 10 bits
- * encoding version. */
-#define OBJ_MODULE 5
-
 /* Extract encver / signature from a module type ID. */
 #define REDISMODULE_TYPE_ENCVER_BITS 10
 #define REDISMODULE_TYPE_ENCVER_MASK ((1<<REDISMODULE_TYPE_ENCVER_BITS)-1)
@@ -439,45 +422,6 @@ typedef struct RedisModuleType {
     moduleTypeFreeFunc free;
     char name[10]; /* 9 bytes name + null term. Charset: A-Z a-z 0-9 _- */
 } moduleType;
-
-/* In Redis objects 'robj' structures of type OBJ_MODULE, the value pointer
- * is set to the following structure, referencing the moduleType structure
- * in order to work with the value, and at the same time providing a raw
- * pointer to the value, as created by the module commands operating with
- * the module type.
- *
- * So for example in order to free such a value, it is possible to use
- * the following code:
- *
- *  if (robj->type == OBJ_MODULE) {
- *      moduleValue *mt = robj->ptr;
- *      mt->type->free(mt->value);
- *      zfree(mt); // We need to release this in-the-middle struct as well.
- *  }
- */
-typedef struct moduleValue {
-    moduleType *type;
-    void *value;
-} moduleValue;
-
-/* This is a wrapper for the 'rio' streams used inside rdb.c in Redis, so that
- * the user does not have to take the total count of the written bytes nor
- * to care about error conditions. */
-typedef struct RedisModuleIO {
-    size_t bytes;       /* Bytes read / written so far. */
-    rio *rio;           /* Rio stream. */
-    moduleType *type;   /* Module type doing the operation. */
-    int error;          /* True if error condition happened. */
-    struct RedisModuleCtx *ctx; /* Optional context, see RM_GetContextFromIO()*/
-} RedisModuleIO;
-
-#define moduleInitIOContext(iovar,mtype,rioptr) do { \
-    iovar.rio = rioptr; \
-    iovar.type = mtype; \
-    iovar.bytes = 0; \
-    iovar.error = 0; \
-    iovar.ctx = NULL; \
-} while(0);
 
 /* Objects encoding. Some kind of objects like Strings and Hashes can be
  * internally represented in multiple ways. The 'encoding' field of the object
@@ -962,7 +906,6 @@ struct redisServer {
     int repl_slave_ro;          /* Slave is read only? */
     time_t repl_down_since; /* Unix time at which link with master went down */
     int repl_disable_tcp_nodelay;   /* Disable TCP_NODELAY after SYNC? */
-    int slave_priority;             /* Reported in INFO and used by Sentinel. */
     int slave_announce_port;        /* Give the master this listening port. */
     char *slave_announce_ip;        /* Give the master this ip address. */
     /* The following two fields is where we store master PSYNC replid/offset
@@ -1008,7 +951,6 @@ struct redisServer {
                                    xor of NOTIFY_... flags. */
     /* Latency monitor */
     long long latency_monitor_threshold;
-    dict *latency_events;
     /* Assert & bug reporting */
     const char *assert_failed;
     const char *assert_file;

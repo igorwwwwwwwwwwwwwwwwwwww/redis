@@ -187,8 +187,6 @@ void debugCommand(client *c) {
         blen++; addReplyStatus(c,
         "reload   -- Save the RDB on disk and reload it back in memory.");
         blen++; addReplyStatus(c,
-        "loadaof  -- Flush the AOF buffers on disk and reload the AOF in memory.");
-        blen++; addReplyStatus(c,
         "object <key> -- Show low level info about key and associated value.");
         blen++; addReplyStatus(c,
         "sdslen <key> -- Show low level SDS string info representing key and value.");

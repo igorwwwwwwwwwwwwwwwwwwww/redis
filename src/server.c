@@ -320,86 +320,6 @@ void updateDictResizePolicy(void) {
     dictEnableResize();
 }
 
-/* ======================= Cron: called every 100 ms ======================== */
-
-/* Check for timeouts. Returns non-zero if the client was terminated.
- * The function gets the current time in milliseconds as argument since
- * it gets called multiple times in a loop, so calling gettimeofday() for
- * each iteration would be costly without any actual gain. */
-int clientsCronHandleTimeout(client *c, mstime_t now_ms) {
-    time_t now = now_ms/1000;
-
-    if (server.maxidletime &&
-        (now - c->lastinteraction > server.maxidletime))
-    {
-        serverLog(LL_VERBOSE,"Closing idle client");
-        freeClient(c);
-        return 1;
-    }
-    return 0;
-}
-
-/* The client query buffer is an sds.c string that can end with a lot of
- * free space not used, this function reclaims space if needed.
- *
- * The function always returns 0 as it never terminates the client. */
-int clientsCronResizeQueryBuffer(client *c) {
-    size_t querybuf_size = sdsAllocSize(c->querybuf);
-    time_t idletime = server.unixtime - c->lastinteraction;
-
-    /* There are two conditions to resize the query buffer:
-     * 1) Query buffer is > BIG_ARG and too big for latest peak.
-     * 2) Client is inactive and the buffer is bigger than 1k. */
-    if (((querybuf_size > PROTO_MBULK_BIG_ARG) &&
-         (querybuf_size/(c->querybuf_peak+1)) > 2) ||
-         (querybuf_size > 1024 && idletime > 2))
-    {
-        /* Only resize the query buffer if it is actually wasting space. */
-        if (sdsavail(c->querybuf) > 1024) {
-            c->querybuf = sdsRemoveFreeSpace(c->querybuf);
-        }
-    }
-    /* Reset the peak again to capture the peak memory usage in the next
-     * cycle. */
-    c->querybuf_peak = 0;
-    return 0;
-}
-
-#define CLIENTS_CRON_MIN_ITERATIONS 5
-void clientsCron(void) {
-    /* Make sure to process at least numclients/server.hz of clients
-     * per call. Since this function is called server.hz times per second
-     * we are sure that in the worst case we process all the clients in 1
-     * second. */
-    int numclients = listLength(server.clients);
-    int iterations = numclients/server.hz;
-    mstime_t now = mstime();
-
-    /* Process at least a few clients while we are at it, even if we need
-     * to process less than CLIENTS_CRON_MIN_ITERATIONS to meet our contract
-     * of processing each client once per second. */
-    if (iterations < CLIENTS_CRON_MIN_ITERATIONS)
-        iterations = (numclients < CLIENTS_CRON_MIN_ITERATIONS) ?
-                     numclients : CLIENTS_CRON_MIN_ITERATIONS;
-
-    while(listLength(server.clients) && iterations--) {
-        client *c;
-        listNode *head;
-
-        /* Rotate the list, take the current head, process.
-         * This way if the client must be removed from the list it's the
-         * first element and we don't incur into O(N) computation. */
-        listRotate(server.clients);
-        head = listFirst(server.clients);
-        c = listNodeValue(head);
-        /* The following functions do different service checks on the client.
-         * The protocol is that they return non-zero if the client was
-         * terminated. */
-        if (clientsCronHandleTimeout(c,now)) continue;
-        if (clientsCronResizeQueryBuffer(c)) continue;
-    }
-}
-
 /* This function handles 'background' operations we are required to do
  * incrementally in Redis databases, such as active key expiring, resizing,
  * rehashing. */
@@ -480,9 +400,6 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
         serverLog(LL_WARNING,"SIGTERM received but errors trying to shut down the server, check the logs for more information");
         server.shutdown_asap = 0;
     }
-
-    /* We need to do a few operations on clients asynchronously. */
-    clientsCron();
 
     /* Handle background operations on Redis databases. */
     databasesCron();
@@ -596,7 +513,6 @@ void initServerConfig(void) {
     server.unixsocketperm = CONFIG_DEFAULT_UNIX_SOCKET_PERM;
     server.ipfd_count = 0;
     server.dbnum = CONFIG_DEFAULT_DBNUM;
-    server.maxidletime = CONFIG_DEFAULT_CLIENT_TIMEOUT;
     server.client_max_querybuf_len = PROTO_MAX_QUERYBUF_LEN;
     server.activerehashing = CONFIG_DEFAULT_ACTIVE_REHASHING;
     server.shutdown_asap = 0;

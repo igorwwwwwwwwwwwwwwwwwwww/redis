@@ -557,8 +557,6 @@ struct redisServer {
     char neterr[ANET_ERR_LEN];   /* Error buffer for anet.c */
     uint64_t next_client_id;    /* Next client unique ID. Incremental. */
     int protected_mode;         /* Don't accept external connections. */
-    /* Fast pointers to often looked up command */
-    struct redisCommand *delCommand;
     /* Configuration */
     int verbosity;                  /* Loglevel in redis.conf */
     int maxidletime;                /* Client timeout in seconds */

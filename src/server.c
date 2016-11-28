@@ -732,7 +732,6 @@ void initServerConfig(void) {
      * redis.conf using the rename-command directive. */
     server.commands = dictCreate(&commandTableDictType,NULL);
     populateCommandTable();
-    server.delCommand = lookupCommandByCString("del");
 
     /* Debugging */
     server.assert_failed = "<no assertion failed>";

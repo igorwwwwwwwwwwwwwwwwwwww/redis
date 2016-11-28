@@ -97,37 +97,8 @@ struct redisCommand redisCommandTable[] = {
 /* Low level logging. To use only for very big messages, otherwise
  * serverLog() is to prefer. */
 void serverLogRaw(int level, const char *msg) {
-    const int syslogLevelMap[] = { LOG_DEBUG, LOG_INFO, LOG_NOTICE, LOG_WARNING };
-    const char *c = ".-*#";
-    FILE *fp;
-    char buf[64];
-    int rawmode = (level & LL_RAW);
-    int log_to_stdout = server.logfile[0] == '\0';
-
-    level &= 0xff; /* clear flags */
-    if (level < server.verbosity) return;
-
-    fp = log_to_stdout ? stdout : fopen(server.logfile,"a");
-    if (!fp) return;
-
-    if (rawmode) {
-        fprintf(fp,"%s",msg);
-    } else {
-        int off;
-        struct timeval tv;
-        int role_char;
-
-        gettimeofday(&tv,NULL);
-        off = strftime(buf,sizeof(buf),"%d %b %H:%M:%S.",localtime(&tv.tv_sec));
-        snprintf(buf+off,sizeof(buf)-off,"%03d",(int)tv.tv_usec/1000);
-        role_char = 'M';
-        fprintf(fp,"%d:%c %s %c %s\n",
-            (int)getpid(),role_char, buf,c[level],msg);
-    }
-    fflush(fp);
-
-    if (!log_to_stdout) fclose(fp);
-    if (server.syslog_enabled) syslog(syslogLevelMap[level], "%s", msg);
+    fprintf(stdout,"[%i] %s",level,msg);
+    fflush(stdout);
 }
 
 /* Like serverLogRaw() but with printf-alike support. This is the function that
@@ -136,8 +107,6 @@ void serverLogRaw(int level, const char *msg) {
 void serverLog(int level, const char *fmt, ...) {
     va_list ap;
     char msg[LOG_MAX_LEN];
-
-    if ((level&0xff) < server.verbosity) return;
 
     va_start(ap, fmt);
     vsnprintf(msg, sizeof(msg), fmt, ap);
@@ -154,24 +123,20 @@ void serverLog(int level, const char *fmt, ...) {
  * where we need printf-alike features are served by serverLog(). */
 void serverLogFromHandler(int level, const char *msg) {
     int fd;
-    int log_to_stdout = server.logfile[0] == '\0';
     char buf[64];
 
-    if ((level&0xff) < server.verbosity || (log_to_stdout && server.daemonize))
-        return;
-    fd = log_to_stdout ? STDOUT_FILENO :
-                         open(server.logfile, O_APPEND|O_CREAT|O_WRONLY, 0644);
+    UNUSED(level);
+
+    fd = STDOUT_FILENO;
     if (fd == -1) return;
     ll2string(buf,sizeof(buf),getpid());
-    if (write(fd,buf,strlen(buf)) == -1) goto err;
-    if (write(fd,":signal-handler (",17) == -1) goto err;
+    if (write(fd,buf,strlen(buf)) == -1) return;
+    if (write(fd,":signal-handler (",17) == -1) return;
     ll2string(buf,sizeof(buf),time(NULL));
-    if (write(fd,buf,strlen(buf)) == -1) goto err;
-    if (write(fd,") ",2) == -1) goto err;
-    if (write(fd,msg,strlen(msg)) == -1) goto err;
-    if (write(fd,"\n",1) == -1) goto err;
-err:
-    if (!log_to_stdout) close(fd);
+    if (write(fd,buf,strlen(buf)) == -1) return;
+    if (write(fd,") ",2) == -1) return;
+    if (write(fd,msg,strlen(msg)) == -1) return;
+    if (write(fd,"\n",1) == -1) return;
 }
 
 /* Return the UNIX time in microseconds */
@@ -195,18 +160,6 @@ mstime_t mstime(void) {
 /* This is a hash table type that uses the SDS dynamic strings library as
  * keys and redis objects as values (objects can hold SDS strings,
  * lists, sets). */
-
-void dictVanillaFree(void *privdata, void *val)
-{
-    DICT_NOTUSED(privdata);
-    zfree(val);
-}
-
-void dictListDestructor(void *privdata, void *val)
-{
-    DICT_NOTUSED(privdata);
-    listRelease((list*)val);
-}
 
 int dictSdsKeyCompare(void *privdata, const void *key1,
         const void *key2)
@@ -243,18 +196,6 @@ void dictSdsDestructor(void *privdata, void *val)
     DICT_NOTUSED(privdata);
 
     sdsfree(val);
-}
-
-int dictObjKeyCompare(void *privdata, const void *key1,
-        const void *key2)
-{
-    const robj *o1 = key1, *o2 = key2;
-    return dictSdsKeyCompare(privdata,o1->ptr,o2->ptr);
-}
-
-unsigned int dictObjHash(const void *key) {
-    const robj *o = key;
-    return dictGenHashFunction(o->ptr, sdslen((sds)o->ptr));
 }
 
 unsigned int dictSdsHash(const void *key) {
@@ -314,16 +255,6 @@ dictType objectKeyPointerValueDictType = {
     NULL,                      /* val dup */
     dictEncObjKeyCompare,      /* key compare */
     dictObjectDestructor, /* key destructor */
-    NULL                       /* val destructor */
-};
-
-/* Set dictionary type. Keys are SDS strings, values are ot used. */
-dictType setDictType = {
-    dictSdsHash,               /* hash function */
-    NULL,                      /* key dup */
-    NULL,                      /* val dup */
-    dictSdsKeyCompare,         /* key compare */
-    dictSdsDestructor,         /* key destructor */
     NULL                       /* val destructor */
 };
 
@@ -694,19 +625,10 @@ void initServerConfig(void) {
     server.sofd = -1;
     server.protected_mode = CONFIG_DEFAULT_PROTECTED_MODE;
     server.dbnum = CONFIG_DEFAULT_DBNUM;
-    server.verbosity = CONFIG_DEFAULT_VERBOSITY;
     server.maxidletime = CONFIG_DEFAULT_CLIENT_TIMEOUT;
     server.tcpkeepalive = CONFIG_DEFAULT_TCP_KEEPALIVE;
     server.active_expire_enabled = 1;
     server.client_max_querybuf_len = PROTO_MAX_QUERYBUF_LEN;
-    server.logfile = zstrdup(CONFIG_DEFAULT_LOGFILE);
-    server.syslog_enabled = CONFIG_DEFAULT_SYSLOG_ENABLED;
-    server.syslog_ident = zstrdup(CONFIG_DEFAULT_SYSLOG_IDENT);
-    server.syslog_facility = LOG_LOCAL0;
-    server.daemonize = CONFIG_DEFAULT_DAEMONIZE;
-    server.supervised = 0;
-    server.supervised_mode = SUPERVISED_NONE;
-    server.pidfile = NULL;
     server.activerehashing = CONFIG_DEFAULT_ACTIVE_REHASHING;
     server.maxclients = CONFIG_DEFAULT_MAX_CLIENTS;
     server.shutdown_asap = 0;
@@ -958,11 +880,6 @@ void initServer(void) {
     signal(SIGPIPE, SIG_IGN);
     setupSignalHandlers();
 
-    if (server.syslog_enabled) {
-        openlog(server.syslog_ident, LOG_PID | LOG_NDELAY | LOG_NOWAIT,
-            server.syslog_facility);
-    }
-
     server.pid = getpid();
     server.current_client = NULL;
     server.clients = listCreate();
@@ -1202,12 +1119,6 @@ void closeListeningSockets(int unlink_unix_socket) {
 
 int prepareForShutdown() {
     serverLog(LL_WARNING,"User requested shutdown...");
-
-    /* Remove the pid file if possible and needed. */
-    if (server.daemonize || server.pidfile) {
-        serverLog(LL_NOTICE,"Removing the pid file.");
-        unlink(server.pidfile);
-    }
 
     /* Close the listening sockets. Apparently this allows faster restarts. */
     closeListeningSockets(1);
@@ -1481,36 +1392,6 @@ void linuxMemoryWarnings(void) {
 }
 #endif /* __linux__ */
 
-void createPidFile(void) {
-    /* If pidfile requested, but no pidfile defined, use
-     * default pidfile path */
-    if (!server.pidfile) server.pidfile = zstrdup(CONFIG_DEFAULT_PID_FILE);
-
-    /* Try to write the pid file in a best-effort way. */
-    FILE *fp = fopen(server.pidfile,"w");
-    if (fp) {
-        fprintf(fp,"%d\n",(int)getpid());
-        fclose(fp);
-    }
-}
-
-void daemonize(void) {
-    int fd;
-
-    if (fork() != 0) exit(0); /* parent exits */
-    setsid(); /* create a new session */
-
-    /* Every output goes to /dev/null. If Redis is daemonized but
-     * the 'logfile' is set to 'stdout' in the configuration file
-     * it will not log at all. */
-    if ((fd = open("/dev/null", O_RDWR, 0)) != -1) {
-        dup2(fd, STDIN_FILENO);
-        dup2(fd, STDOUT_FILENO);
-        dup2(fd, STDERR_FILENO);
-        if (fd > STDERR_FILENO) close(fd);
-    }
-}
-
 void version(void) {
     printf("Redis server v=%s sha=%s:%d malloc=%s bits=%d build=%llx\n",
         REDIS_VERSION,
@@ -1532,7 +1413,6 @@ void usage(void) {
     fprintf(stderr,"       ./redis-server (run the server with default conf)\n");
     fprintf(stderr,"       ./redis-server /etc/redis/6379.conf\n");
     fprintf(stderr,"       ./redis-server --port 7777\n");
-    fprintf(stderr,"       ./redis-server /etc/myredis.conf --loglevel verbose\n\n");
     exit(1);
 }
 
@@ -1543,27 +1423,16 @@ void redisAsciiArt(void) {
 
     mode = "standalone";
 
-    if (server.syslog_enabled) {
-        serverLog(LL_NOTICE,
-            "Redis %s (%s/%d) %s bit, %s mode, port %d, pid %ld ready to start.",
-            REDIS_VERSION,
-            redisGitSHA1(),
-            strtol(redisGitDirty(),NULL,10) > 0,
-            (sizeof(long) == 8) ? "64" : "32",
-            mode, server.port,
-            (long) getpid()
-        );
-    } else {
-        snprintf(buf,1024*16,ascii_logo,
-            REDIS_VERSION,
-            redisGitSHA1(),
-            strtol(redisGitDirty(),NULL,10) > 0,
-            (sizeof(long) == 8) ? "64" : "32",
-            mode, server.port,
-            (long) getpid()
-        );
-        serverLogRaw(LL_NOTICE|LL_RAW,buf);
-    }
+    snprintf(buf,1024*16,ascii_logo,
+        REDIS_VERSION,
+        redisGitSHA1(),
+        strtol(redisGitDirty(),NULL,10) > 0,
+        (sizeof(long) == 8) ? "64" : "32",
+        mode, server.port,
+        (long) getpid()
+    );
+    serverLogRaw(LL_NOTICE|LL_RAW,buf);
+
     zfree(buf);
 }
 
@@ -1623,135 +1492,9 @@ void redisOutOfMemoryHandler(size_t allocation_size) {
     serverPanic("Redis aborting for OUT OF MEMORY");
 }
 
-void redisSetProcTitle(char *title) {
-    UNUSED(title);
-}
-
-/*
- * Check whether systemd or upstart have been used to start redis.
- */
-
-int redisSupervisedUpstart(void) {
-    const char *upstart_job = getenv("UPSTART_JOB");
-
-    if (!upstart_job) {
-        serverLog(LL_WARNING,
-                "upstart supervision requested, but UPSTART_JOB not found");
-        return 0;
-    }
-
-    serverLog(LL_NOTICE, "supervised by upstart, will stop to signal readiness");
-    raise(SIGSTOP);
-    unsetenv("UPSTART_JOB");
-    return 1;
-}
-
-int redisSupervisedSystemd(void) {
-    const char *notify_socket = getenv("NOTIFY_SOCKET");
-    int fd = 1;
-    struct sockaddr_un su;
-    struct iovec iov;
-    struct msghdr hdr;
-    int sendto_flags = 0;
-
-    if (!notify_socket) {
-        serverLog(LL_WARNING,
-                "systemd supervision requested, but NOTIFY_SOCKET not found");
-        return 0;
-    }
-
-    if ((strchr("@/", notify_socket[0])) == NULL || strlen(notify_socket) < 2) {
-        return 0;
-    }
-
-    serverLog(LL_NOTICE, "supervised by systemd, will signal readiness");
-    if ((fd = socket(AF_UNIX, SOCK_DGRAM, 0)) == -1) {
-        serverLog(LL_WARNING,
-                "Can't connect to systemd socket %s", notify_socket);
-        return 0;
-    }
-
-    memset(&su, 0, sizeof(su));
-    su.sun_family = AF_UNIX;
-    strncpy (su.sun_path, notify_socket, sizeof(su.sun_path) -1);
-    su.sun_path[sizeof(su.sun_path) - 1] = '\0';
-
-    if (notify_socket[0] == '@')
-        su.sun_path[0] = '\0';
-
-    memset(&iov, 0, sizeof(iov));
-    iov.iov_base = "READY=1";
-    iov.iov_len = strlen("READY=1");
-
-    memset(&hdr, 0, sizeof(hdr));
-    hdr.msg_name = &su;
-    hdr.msg_namelen = offsetof(struct sockaddr_un, sun_path) +
-        strlen(notify_socket);
-    hdr.msg_iov = &iov;
-    hdr.msg_iovlen = 1;
-
-    unsetenv("NOTIFY_SOCKET");
-#ifdef HAVE_MSG_NOSIGNAL
-    sendto_flags |= MSG_NOSIGNAL;
-#endif
-    if (sendmsg(fd, &hdr, sendto_flags) < 0) {
-        serverLog(LL_WARNING, "Can't send notification to systemd");
-        close(fd);
-        return 0;
-    }
-    close(fd);
-    return 1;
-}
-
-int redisIsSupervised(int mode) {
-    if (mode == SUPERVISED_AUTODETECT) {
-        const char *upstart_job = getenv("UPSTART_JOB");
-        const char *notify_socket = getenv("NOTIFY_SOCKET");
-
-        if (upstart_job) {
-            redisSupervisedUpstart();
-        } else if (notify_socket) {
-            redisSupervisedSystemd();
-        }
-    } else if (mode == SUPERVISED_UPSTART) {
-        return redisSupervisedUpstart();
-    } else if (mode == SUPERVISED_SYSTEMD) {
-        return redisSupervisedSystemd();
-    }
-
-    return 0;
-}
-
-
 int main(int argc, char **argv) {
     struct timeval tv;
     int j;
-
-#ifdef REDIS_TEST
-    if (argc == 3 && !strcasecmp(argv[1], "test")) {
-        if (!strcasecmp(argv[2], "ziplist")) {
-            return ziplistTest(argc, argv);
-        } else if (!strcasecmp(argv[2], "quicklist")) {
-            quicklistTest(argc, argv);
-        } else if (!strcasecmp(argv[2], "intset")) {
-            return intsetTest(argc, argv);
-        } else if (!strcasecmp(argv[2], "zipmap")) {
-            return zipmapTest(argc, argv);
-        } else if (!strcasecmp(argv[2], "sha1test")) {
-            return sha1Test(argc, argv);
-        } else if (!strcasecmp(argv[2], "util")) {
-            return utilTest(argc, argv);
-        } else if (!strcasecmp(argv[2], "sds")) {
-            return sdsTest(argc, argv);
-        } else if (!strcasecmp(argv[2], "endianconv")) {
-            return endianconvTest(argc, argv);
-        } else if (!strcasecmp(argv[2], "crc64")) {
-            return crc64Test(argc, argv);
-        }
-
-        return -1; /* test not found */
-    }
-#endif
 
     /* We need to initialize our libraries, and the server configuration. */
     setlocale(LC_COLLATE,"");
@@ -1819,13 +1562,7 @@ int main(int argc, char **argv) {
         serverLog(LL_WARNING, "Warning: no config file specified, using the default config. In order to specify a config file use %s /path/to/%s.conf", argv[0], "redis");
     }
 
-    server.supervised = redisIsSupervised(server.supervised_mode);
-    int background = server.daemonize && !server.supervised;
-    if (background) daemonize();
-
     initServer();
-    if (background || server.pidfile) createPidFile();
-    redisSetProcTitle(argv[0]);
     redisAsciiArt();
     checkTcpBacklogSettings();
 

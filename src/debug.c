@@ -309,31 +309,11 @@ void logRegisters(ucontext_t *uc) {
 #endif
 }
 
-/* Return a file descriptor to write directly to the Redis log with the
- * write(2) syscall, that can be used in critical sections of the code
- * where the rest of Redis can't be trusted (for example during the memory
- * test) or when an API call requires a raw fd.
- *
- * Close it with closeDirectLogFiledes(). */
-int openDirectLogFiledes(void) {
-    int log_to_stdout = server.logfile[0] == '\0';
-    int fd = log_to_stdout ?
-        STDOUT_FILENO :
-        open(server.logfile, O_APPEND|O_CREAT|O_WRONLY, 0644);
-    return fd;
-}
-
-/* Used to close what closeDirectLogFiledes() returns. */
-void closeDirectLogFiledes(int fd) {
-    int log_to_stdout = server.logfile[0] == '\0';
-    if (!log_to_stdout) close(fd);
-}
-
 /* Logs the stack trace using the backtrace() call. This function is designed
  * to be called from signal handlers safely. */
 void logStackTrace(ucontext_t *uc) {
     void *trace[101];
-    int trace_size = 0, fd = openDirectLogFiledes();
+    int trace_size = 0, fd = STDOUT_FILENO;
 
     if (fd == -1) return; /* If we can't log there is anything to do. */
 
@@ -351,9 +331,6 @@ void logStackTrace(ucontext_t *uc) {
 
     /* Write symbols to log file */
     backtrace_symbols_fd(trace+1, trace_size, fd);
-
-    /* Cleanup */
-    closeDirectLogFiledes(fd);
 }
 
 /* Log information about the "current" client, that is, the client that is
@@ -500,9 +477,6 @@ void sigsegvHandler(int sig, siginfo_t *info, void *secret) {
 "           http://github.com/antirez/redis/issues\n\n"
 "  Suspect RAM error? Use redis-server --test-memory to verify it.\n\n"
 );
-
-    /* free(messages); Don't call free() with possibly corrupted memory. */
-    if (server.daemonize && server.supervised == 0) unlink(server.pidfile);
 
     /* Make sure we exit with the right signal at the end. So for instance
      * the core will be dumped if enabled. */

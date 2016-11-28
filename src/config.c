@@ -42,35 +42,6 @@ typedef struct configEnum {
     const int val;
 } configEnum;
 
-configEnum syslog_facility_enum[] = {
-    {"user",    LOG_USER},
-    {"local0",  LOG_LOCAL0},
-    {"local1",  LOG_LOCAL1},
-    {"local2",  LOG_LOCAL2},
-    {"local3",  LOG_LOCAL3},
-    {"local4",  LOG_LOCAL4},
-    {"local5",  LOG_LOCAL5},
-    {"local6",  LOG_LOCAL6},
-    {"local7",  LOG_LOCAL7},
-    {NULL, 0}
-};
-
-configEnum loglevel_enum[] = {
-    {"debug", LL_DEBUG},
-    {"verbose", LL_VERBOSE},
-    {"notice", LL_NOTICE},
-    {"warning", LL_WARNING},
-    {NULL,0}
-};
-
-configEnum supervised_mode_enum[] = {
-    {"upstart", SUPERVISED_UPSTART},
-    {"systemd", SUPERVISED_SYSTEMD},
-    {"auto", SUPERVISED_AUTODETECT},
-    {"no", SUPERVISED_NONE},
-    {NULL, 0}
-};
-
 /* Output buffer limits presets. */
 clientBufferLimitsConfig clientBufferLimitsDefaults[CLIENT_TYPE_OBUF_COUNT] = {
     {0, 0, 0} /* normal */
@@ -188,43 +159,6 @@ void loadServerConfigFromString(char *config) {
             if (errno || server.unixsocketperm > 0777) {
                 err = "Invalid socket file permissions"; goto loaderr;
             }
-        } else if (!strcasecmp(argv[0],"loglevel") && argc == 2) {
-            server.verbosity = configEnumGetValue(loglevel_enum,argv[1]);
-            if (server.verbosity == INT_MIN) {
-                err = "Invalid log level. "
-                      "Must be one of debug, verbose, notice, warning";
-                goto loaderr;
-            }
-        } else if (!strcasecmp(argv[0],"logfile") && argc == 2) {
-            FILE *logfp;
-
-            zfree(server.logfile);
-            server.logfile = zstrdup(argv[1]);
-            if (server.logfile[0] != '\0') {
-                /* Test if we are able to open the file. The server will not
-                 * be able to abort just for this problem later... */
-                logfp = fopen(server.logfile,"a");
-                if (logfp == NULL) {
-                    err = sdscatprintf(sdsempty(),
-                        "Can't open the log file: %s", strerror(errno));
-                    goto loaderr;
-                }
-                fclose(logfp);
-            }
-        } else if (!strcasecmp(argv[0],"syslog-enabled") && argc == 2) {
-            if ((server.syslog_enabled = yesnotoi(argv[1])) == -1) {
-                err = "argument must be 'yes' or 'no'"; goto loaderr;
-            }
-        } else if (!strcasecmp(argv[0],"syslog-ident") && argc == 2) {
-            if (server.syslog_ident) zfree(server.syslog_ident);
-            server.syslog_ident = zstrdup(argv[1]);
-        } else if (!strcasecmp(argv[0],"syslog-facility") && argc == 2) {
-            server.syslog_facility =
-                configEnumGetValue(syslog_facility_enum,argv[1]);
-            if (server.syslog_facility == INT_MIN) {
-                err = "Invalid log facility. Must be one of USER or between LOCAL0-LOCAL7";
-                goto loaderr;
-            }
         } else if (!strcasecmp(argv[0],"databases") && argc == 2) {
             server.dbnum = atoi(argv[1]);
             if (server.dbnum < 1) {
@@ -241,17 +175,10 @@ void loadServerConfigFromString(char *config) {
             if ((server.activerehashing = yesnotoi(argv[1])) == -1) {
                 err = "argument must be 'yes' or 'no'"; goto loaderr;
             }
-        } else if (!strcasecmp(argv[0],"daemonize") && argc == 2) {
-            if ((server.daemonize = yesnotoi(argv[1])) == -1) {
-                err = "argument must be 'yes' or 'no'"; goto loaderr;
-            }
         } else if (!strcasecmp(argv[0],"hz") && argc == 2) {
             server.hz = atoi(argv[1]);
             if (server.hz < CONFIG_MIN_HZ) server.hz = CONFIG_MIN_HZ;
             if (server.hz > CONFIG_MAX_HZ) server.hz = CONFIG_MAX_HZ;
-        } else if (!strcasecmp(argv[0],"pidfile") && argc == 2) {
-            zfree(server.pidfile);
-            server.pidfile = zstrdup(argv[1]);
         } else if (!strcasecmp(argv[0],"client-output-buffer-limit") &&
                    argc == 5)
         {
@@ -269,15 +196,6 @@ void loadServerConfigFromString(char *config) {
             server.client_obuf_limits[class].hard_limit_bytes = hard;
             server.client_obuf_limits[class].soft_limit_bytes = soft;
             server.client_obuf_limits[class].soft_limit_seconds = soft_seconds;
-        } else if (!strcasecmp(argv[0],"supervised") && argc == 2) {
-            server.supervised_mode =
-                configEnumGetValue(supervised_mode_enum,argv[1]);
-
-            if (server.supervised_mode == INT_MIN) {
-                err = "Invalid option for 'supervised'. "
-                    "Allowed values: 'upstart', 'systemd', 'auto', or 'no'";
-                goto loaderr;
-            }
         } else {
             err = "Bad directive or wrong number of arguments"; goto loaderr;
         }
@@ -463,11 +381,6 @@ void configSetCommand(client *c) {
          * but cap them to reasonable values. */
         if (server.hz < CONFIG_MIN_HZ) server.hz = CONFIG_MIN_HZ;
         if (server.hz > CONFIG_MAX_HZ) server.hz = CONFIG_MAX_HZ;
-
-    /* Enumeration fields.
-     * config_set_enum_field(name,var,enum_var) */
-    } config_set_enum_field(
-      "loglevel",server.verbosity,loglevel_enum) {
 
     /* Everyhing else is an error... */
     } config_set_else {

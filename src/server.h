@@ -85,7 +85,6 @@ typedef long long mstime_t; /* millisecond time type. */
 #define CONFIG_RUN_ID_SIZE 40
 #define CONFIG_DEFAULT_UNIX_SOCKET_PERM 0
 #define CONFIG_DEFAULT_TCP_KEEPALIVE 300
-#define CONFIG_DEFAULT_PROTECTED_MODE 1
 #define CONFIG_DEFAULT_ACTIVE_REHASHING 1
 #define NET_IP_STR_LEN 46 /* INET6_ADDRSTRLEN is 46, but we need to be sure */
 #define NET_PEER_ID_LEN (NET_IP_STR_LEN+32) /* Must be enough for ip:port */
@@ -310,7 +309,6 @@ struct evictionPoolEntry; /* Defined in evict.c */
  * database. The database number is the 'id' field in the structure. */
 typedef struct redisDb {
     dict *dict;                 /* The keyspace for this DB */
-    dict *ready_keys;           /* Blocked keys that received a PUSH */
     int id;                     /* Database ID */
     long long avg_ttl;          /* Average TTL, just for stats */
 } redisDb;
@@ -332,22 +330,6 @@ typedef struct blockingState {
     int numreplicas;        /* Number of replicas we are waiting for ACK. */
     long long reploffset;   /* Replication offset to reach. */
 } blockingState;
-
-/* The following structure represents a node in the server.ready_keys list,
- * where we accumulate all the keys that had clients blocked with a blocking
- * operation such as B[LR]POP, but received new data in the context of the
- * last executed command.
- *
- * After the execution of every command or script, we run this list to check
- * if as a result we should serve data to clients blocked, unblocking them.
- * Note that server.ready_keys will not have duplicates as there dictionary
- * also called ready_keys in every structure representing a Redis database,
- * where we make sure to remember if a given key was already added in the
- * server.ready_keys list. */
-typedef struct readyList {
-    redisDb *db;
-    robj *key;
-} readyList;
 
 /* With multiplexing we need to take per-client state.
  * Clients are taken in a linked list. */
@@ -474,19 +456,14 @@ struct redisServer {
     int hz;                     /* serverCron() calls frequency in hertz */
     redisDb *db;
     dict *commands;             /* Command table */
-    dict *orig_commands;        /* Command table before command renaming. */
     aeEventLoop *el;
     int shutdown_asap;          /* SHUTDOWN needed ASAP */
     int activerehashing;        /* Incremental rehash in serverCron() */
     int arch_bits;              /* 32 or 64 depending on sizeof(long) */
     int cronloops;              /* Number of times the cron function run */
     char runid[CONFIG_RUN_ID_SIZE+1];  /* ID always different at every exec. */
-    size_t initial_memory_usage; /* Bytes used after initialization. */
-    /* Modules */
-    list *loadmodule_queue;     /* List of modules to load at startup. */
     /* Networking */
     int port;                   /* TCP listening port */
-    int tcp_backlog;            /* TCP listen() backlog */
     char *bindaddr[CONFIG_BINDADDR_MAX]; /* Addresses we should bind to */
     int bindaddr_count;         /* Number of addresses in server.bindaddr[] */
     char *unixsocket;           /* UNIX socket path */
@@ -504,16 +481,11 @@ struct redisServer {
     mstime_t clients_pause_end_time; /* Time when we undo clients_paused */
     char neterr[ANET_ERR_LEN];   /* Error buffer for anet.c */
     uint64_t next_client_id;    /* Next client unique ID. Incremental. */
-    int protected_mode;         /* Don't accept external connections. */
     /* Configuration */
     int maxidletime;                /* Client timeout in seconds */
-    int tcpkeepalive;               /* Set SO_KEEPALIVE if non-zero. */
-    int active_expire_enabled;      /* Can be disabled for testing purposes. */
     size_t client_max_querybuf_len; /* Limit for client query buffer length */
     int dbnum;                      /* Total number of configured DBs */
-    clientBufferLimitsConfig client_obuf_limits[CLIENT_TYPE_OBUF_COUNT];
     list *unblocked_clients; /* list of clients to unblock before next loop */
-    list *ready_keys;        /* List of readyList structures for BLPOP & co */
     /* time cache */
     time_t unixtime;    /* Unix time sampled every cron cycle. */
     long long mstime;   /* Like 'unixtime' but with milliseconds resolution. */

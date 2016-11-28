@@ -118,29 +118,10 @@ void loadServerConfigFromString(char *config) {
         sdstolower(argv[0]);
 
         /* Execute config directives */
-        if (!strcasecmp(argv[0],"timeout") && argc == 2) {
-            server.maxidletime = atoi(argv[1]);
-            if (server.maxidletime < 0) {
-                err = "Invalid timeout value"; goto loaderr;
-            }
-        } else if (!strcasecmp(argv[0],"tcp-keepalive") && argc == 2) {
-            server.tcpkeepalive = atoi(argv[1]);
-            if (server.tcpkeepalive < 0) {
-                err = "Invalid tcp-keepalive value"; goto loaderr;
-            }
-        } else if (!strcasecmp(argv[0],"protected-mode") && argc == 2) {
-            if ((server.protected_mode = yesnotoi(argv[1])) == -1) {
-                err = "argument must be 'yes' or 'no'"; goto loaderr;
-            }
-        } else if (!strcasecmp(argv[0],"port") && argc == 2) {
+        if (!strcasecmp(argv[0],"port") && argc == 2) {
             server.port = atoi(argv[1]);
             if (server.port < 0 || server.port > 65535) {
                 err = "Invalid port"; goto loaderr;
-            }
-        } else if (!strcasecmp(argv[0],"tcp-backlog") && argc == 2) {
-            server.tcp_backlog = atoi(argv[1]);
-            if (server.tcp_backlog < 0) {
-                err = "Invalid backlog value"; goto loaderr;
             }
         } else if (!strcasecmp(argv[0],"bind") && argc >= 2) {
             int j, addresses = argc-1;
@@ -164,8 +145,6 @@ void loadServerConfigFromString(char *config) {
             if (server.dbnum < 1) {
                 err = "Invalid number of databases"; goto loaderr;
             }
-        } else if (!strcasecmp(argv[0],"include") && argc == 2) {
-            loadServerConfig(argv[1],NULL);
         } else if (!strcasecmp(argv[0],"activerehashing") && argc == 2) {
             if ((server.activerehashing = yesnotoi(argv[1])) == -1) {
                 err = "argument must be 'yes' or 'no'"; goto loaderr;
@@ -174,23 +153,6 @@ void loadServerConfigFromString(char *config) {
             server.hz = atoi(argv[1]);
             if (server.hz < CONFIG_MIN_HZ) server.hz = CONFIG_MIN_HZ;
             if (server.hz > CONFIG_MAX_HZ) server.hz = CONFIG_MAX_HZ;
-        } else if (!strcasecmp(argv[0],"client-output-buffer-limit") &&
-                   argc == 5)
-        {
-            int class = CLIENT_TYPE_NORMAL;
-            unsigned long long hard, soft;
-            int soft_seconds;
-
-            hard = memtoll(argv[2],NULL);
-            soft = memtoll(argv[3],NULL);
-            soft_seconds = atoi(argv[4]);
-            if (soft_seconds < 0) {
-                err = "Negative number of seconds in soft limit is invalid";
-                goto loaderr;
-            }
-            server.client_obuf_limits[class].hard_limit_bytes = hard;
-            server.client_obuf_limits[class].soft_limit_bytes = soft;
-            server.client_obuf_limits[class].soft_limit_seconds = soft_seconds;
         } else {
             err = "Bad directive or wrong number of arguments"; goto loaderr;
         }
@@ -289,61 +251,13 @@ void configSetCommand(client *c) {
 
     if (0) { /* this starts the config_set macros else-if chain. */
 
-    /* Special fields that can't be handled with general macros. */
-    config_set_special_field("client-output-buffer-limit") {
-        int vlen, j;
-        sds *v = sdssplitlen(o->ptr,sdslen(o->ptr)," ",1,&vlen);
-
-        /* We need a multiple of 4: <class> <hard> <soft> <soft_seconds> */
-        if (vlen % 4) {
-            sdsfreesplitres(v,vlen);
-            goto badfmt;
-        }
-
-        /* Sanity check of single arguments, so that we either refuse the
-         * whole configuration string or accept it all, even if a single
-         * error in a single client class is present. */
-        for (j = 0; j < vlen; j++) {
-            long val;
-
-            if ((j % 4) != 0) {
-                val = memtoll(v[j], &err);
-                if (err || val < 0) {
-                    sdsfreesplitres(v,vlen);
-                    goto badfmt;
-                }
-            }
-        }
-        /* Finally set the new config */
-        for (j = 0; j < vlen; j += 4) {
-            int class;
-            unsigned long long hard, soft;
-            int soft_seconds;
-
-            class = CLIENT_TYPE_NORMAL;
-            hard = strtoll(v[j+1],NULL,10);
-            soft = strtoll(v[j+2],NULL,10);
-            soft_seconds = strtoll(v[j+3],NULL,10);
-
-            server.client_obuf_limits[class].hard_limit_bytes = hard;
-            server.client_obuf_limits[class].soft_limit_bytes = soft;
-            server.client_obuf_limits[class].soft_limit_seconds = soft_seconds;
-        }
-        sdsfreesplitres(v,vlen);
-
     /* Boolean fields.
      * config_set_bool_field(name,var). */
-    } config_set_bool_field(
+    config_set_bool_field(
       "activerehashing",server.activerehashing) {
-    } config_set_bool_field(
-      "protected-mode",server.protected_mode) {
 
     /* Numerical fields.
      * config_set_numerical_field(name,var,min,max) */
-    } config_set_numerical_field(
-      "tcp-keepalive",server.tcpkeepalive,0,LLONG_MAX) {
-    } config_set_numerical_field(
-      "timeout",server.maxidletime,0,LONG_MAX) {
     } config_set_numerical_field(
       "hz",server.hz,0,LLONG_MAX) {
         /* Hz is more an hint from the user, so we accept values out of range

@@ -584,8 +584,6 @@ void createSharedObjects(void) {
 }
 
 void initServerConfig(void) {
-    int j;
-
     getRandomHexChars(server.runid,CONFIG_RUN_ID_SIZE);
     server.runid[CONFIG_RUN_ID_SIZE] = '\0';
     server.configfile = NULL;
@@ -593,25 +591,17 @@ void initServerConfig(void) {
     server.hz = CONFIG_DEFAULT_HZ;
     server.arch_bits = (sizeof(long) == 8) ? 64 : 32;
     server.port = CONFIG_DEFAULT_SERVER_PORT;
-    server.tcp_backlog = CONFIG_DEFAULT_TCP_BACKLOG;
     server.bindaddr_count = 0;
     server.unixsocket = NULL;
     server.unixsocketperm = CONFIG_DEFAULT_UNIX_SOCKET_PERM;
     server.ipfd_count = 0;
     server.sofd = -1;
-    server.protected_mode = CONFIG_DEFAULT_PROTECTED_MODE;
     server.dbnum = CONFIG_DEFAULT_DBNUM;
     server.maxidletime = CONFIG_DEFAULT_CLIENT_TIMEOUT;
-    server.tcpkeepalive = CONFIG_DEFAULT_TCP_KEEPALIVE;
-    server.active_expire_enabled = 1;
     server.client_max_querybuf_len = PROTO_MAX_QUERYBUF_LEN;
     server.activerehashing = CONFIG_DEFAULT_ACTIVE_REHASHING;
     server.shutdown_asap = 0;
     server.next_client_id = 1; /* Client IDs, start from 1 .*/
-
-    /* Client output buffer limits */
-    for (j = 0; j < CLIENT_TYPE_OBUF_COUNT; j++)
-        server.client_obuf_limits[j] = clientBufferLimitsDefaults[j];
 
     /* Double constants initialization */
     R_Zero = 0.0;
@@ -630,59 +620,6 @@ void initServerConfig(void) {
     server.assert_file = "<no file>";
     server.assert_line = 0;
     server.bug_report_start = 0;
-}
-
-extern char **environ;
-
-/* Restart the server, executing the same executable that started this
- * instance, with the same arguments and configuration file.
- *
- * The function is designed to directly call execve() so that the new
- * server instance will retain the PID of the previous one.
- *
- * The list of flags, that may be bitwise ORed together, alter the
- * behavior of this function:
- *
- * RESTART_SERVER_NONE              No flags.
- * RESTART_SERVER_GRACEFULLY        Do a proper shutdown before restarting.
- * RESTART_SERVER_CONFIG_REWRITE    Rewrite the config file before restarting.
- *
- * On success the function does not return, because the process turns into
- * a different process. On error C_ERR is returned. */
-int restartServer(int flags, mstime_t delay) {
-    /* Check if we still have accesses to the executable that started this
-     * server instance. */
-    if (access(server.executable,X_OK) == -1) return C_ERR;
-
-    /* Perform a proper shutdown. */
-    if (flags & RESTART_SERVER_GRACEFULLY &&
-        prepareForShutdown() != C_OK) return C_ERR;
-
-    /* Execute the server with the original command line. */
-    if (delay) usleep(delay*1000);
-    execve(server.executable,server.exec_argv,environ);
-
-    /* If an error occurred here, there is nothing we can do, but exit. */
-    _exit(1);
-
-    return C_ERR; /* Never reached. */
-}
-
-/* Check that server.tcp_backlog can be actually enforced in Linux according
- * to the value of /proc/sys/net/core/somaxconn, or warn about it. */
-void checkTcpBacklogSettings(void) {
-#ifdef HAVE_PROC_SOMAXCONN
-    FILE *fp = fopen("/proc/sys/net/core/somaxconn","r");
-    char buf[1024];
-    if (!fp) return;
-    if (fgets(buf,sizeof(buf),fp) != NULL) {
-        int somaxconn = atoi(buf);
-        if (somaxconn > 0 && somaxconn < server.tcp_backlog) {
-            serverLog(LL_WARNING,"WARNING: The TCP backlog setting of %d cannot be enforced because /proc/sys/net/core/somaxconn is set to the lower value of %d.", server.tcp_backlog, somaxconn);
-        }
-    }
-    fclose(fp);
-#endif
 }
 
 /* Initialize a set of file descriptors to listen to the specified 'port'
@@ -715,7 +652,7 @@ int listenToPort(int port, int *fds, int *count) {
             /* Bind * for both IPv6 and IPv4, we enter here only if
              * server.bindaddr_count == 0. */
             fds[*count] = anetTcp6Server(server.neterr,port,NULL,
-                server.tcp_backlog);
+                CONFIG_DEFAULT_TCP_BACKLOG);
             if (fds[*count] != ANET_ERR) {
                 anetNonBlock(NULL,fds[*count]);
                 (*count)++;
@@ -727,7 +664,7 @@ int listenToPort(int port, int *fds, int *count) {
             if (*count == 1 || unsupported) {
                 /* Bind the IPv4 address as well. */
                 fds[*count] = anetTcpServer(server.neterr,port,NULL,
-                    server.tcp_backlog);
+                    CONFIG_DEFAULT_TCP_BACKLOG);
                 if (fds[*count] != ANET_ERR) {
                     anetNonBlock(NULL,fds[*count]);
                     (*count)++;
@@ -743,11 +680,11 @@ int listenToPort(int port, int *fds, int *count) {
         } else if (strchr(server.bindaddr[j],':')) {
             /* Bind IPv6 address. */
             fds[*count] = anetTcp6Server(server.neterr,port,server.bindaddr[j],
-                server.tcp_backlog);
+                CONFIG_DEFAULT_TCP_BACKLOG);
         } else {
             /* Bind IPv4 address. */
             fds[*count] = anetTcpServer(server.neterr,port,server.bindaddr[j],
-                server.tcp_backlog);
+                CONFIG_DEFAULT_TCP_BACKLOG);
         }
         if (fds[*count] == ANET_ERR) {
             serverLog(LL_WARNING,
@@ -775,7 +712,6 @@ void initServer(void) {
     server.clients_to_close = listCreate();
     server.clients_pending_write = listCreate();
     server.unblocked_clients = listCreate();
-    server.ready_keys = listCreate();
     server.clients_paused = 0;
     server.system_memory_size = zmalloc_get_memory_size();
 
@@ -792,7 +728,7 @@ void initServer(void) {
     if (server.unixsocket != NULL) {
         unlink(server.unixsocket); /* don't care if this fails */
         server.sofd = anetUnixServer(server.neterr,server.unixsocket,
-            server.unixsocketperm, server.tcp_backlog);
+            server.unixsocketperm, CONFIG_DEFAULT_TCP_BACKLOG);
         if (server.sofd == ANET_ERR) {
             serverLog(LL_WARNING, "Opening Unix socket: %s", server.neterr);
             exit(1);
@@ -809,7 +745,6 @@ void initServer(void) {
     /* Create the Redis databases, and initialize other internal state. */
     for (j = 0; j < server.dbnum; j++) {
         server.db[j].dict = dictCreate(&dbDictType,NULL);
-        server.db[j].ready_keys = dictCreate(&objectKeyPointerValueDictType,NULL);
         server.db[j].id = j;
         server.db[j].avg_ttl = 0;
     }
@@ -836,8 +771,6 @@ void initServer(void) {
     }
     if (server.sofd > 0 && aeCreateFileEvent(server.el,server.sofd,AE_READABLE,
         acceptUnixHandler,NULL) == AE_ERR) serverPanic("Unrecoverable error creating server.sofd file event.");
-
-    server.initial_memory_usage = zmalloc_used_memory();
 }
 
 /* Populates the Redis Command Table starting from the hard coded list
@@ -1406,7 +1339,6 @@ int main(int argc, char **argv) {
 
     initServer();
     redisAsciiArt();
-    checkTcpBacklogSettings();
 
     serverLog(LL_WARNING,"Server started, Redis version " REDIS_VERSION);
 #ifdef __linux__

@@ -463,11 +463,9 @@ void updateCachedTime(void) {
  *
  * Everything directly called here will be called server.hz times per second,
  * so in order to throttle execution of things we want to do less frequently
- * a macro is used: run_with_period(milliseconds) { .... }
  */
 
 int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
-    int j;
     UNUSED(eventLoop);
     UNUSED(id);
     UNUSED(clientData);
@@ -481,28 +479,6 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
         if (prepareForShutdown() == C_OK) exit(0);
         serverLog(LL_WARNING,"SIGTERM received but errors trying to shut down the server, check the logs for more information");
         server.shutdown_asap = 0;
-    }
-
-    /* Show some info about non-empty databases */
-    run_with_period(5000) {
-        for (j = 0; j < server.dbnum; j++) {
-            long long size, used;
-
-            size = dictSlots(server.db[j].dict);
-            used = dictSize(server.db[j].dict);
-            if (used) {
-                serverLog(LL_VERBOSE,"DB %d: %lld keys in %lld slots HT.",j,used,size);
-                /* dictPrintStats(server.dict); */
-            }
-        }
-    }
-
-    /* Show information about connected clients */
-    run_with_period(5000) {
-        serverLog(LL_VERBOSE,
-            "%lu clients connected, %zu bytes in use",
-            listLength(server.clients),
-            zmalloc_used_memory());
     }
 
     /* We need to do a few operations on clients asynchronously. */
@@ -1108,7 +1084,7 @@ void bytesToHuman(char *s, unsigned long long n) {
  * on memory corruption problems. */
 sds genRedisInfoString(char *section) {
     sds info = sdsempty();
-    int j, numcommands;
+    int j;
     struct rusage self_ru, c_ru;
     unsigned long lol, bib;
     int allsections = 0, defsections = 0;

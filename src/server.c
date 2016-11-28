@@ -97,7 +97,7 @@ struct redisCommand redisCommandTable[] = {
 /* Low level logging. To use only for very big messages, otherwise
  * serverLog() is to prefer. */
 void serverLogRaw(int level, const char *msg) {
-    fprintf(stdout,"[%i] %s",level,msg);
+    fprintf(stdout,"[%i] %s\n",level,msg);
     fflush(stdout);
 }
 

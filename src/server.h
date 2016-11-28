@@ -200,11 +200,6 @@ typedef long long mstime_t; /* millisecond time type. */
                                    points are configured. */
 #define SHUTDOWN_NOSAVE 2       /* Don't SAVE on SHUTDOWN. */
 
-/* Command call flags, see call() function */
-#define CMD_CALL_NONE 0
-#define CMD_CALL_STATS (1<<1)
-#define CMD_CALL_FULL (CMD_CALL_STATS)
-
 /* Keyspace changes notification classes. Every class is associated with a
  * character for configuration purposes. */
 #define NOTIFY_KEYSPACE (1<<0)    /* K */
@@ -546,7 +541,6 @@ struct redisCommand {
     int firstkey; /* The first argument that's a key (0 = no keys) */
     int lastkey;  /* The last argument that's a key */
     int keystep;  /* The step between first and last key */
-    long long microseconds, calls;
 };
 
 struct redisFunctionSym {
@@ -739,7 +733,7 @@ void setupSignalHandlers(void);
 struct redisCommand *lookupCommand(sds name);
 struct redisCommand *lookupCommandByCString(char *s);
 struct redisCommand *lookupCommandOrOriginal(sds name);
-void call(client *c, int flags);
+void call(client *c);
 void forceCommandPropagation(client *c, int flags);
 void preventCommandPropagation(client *c);
 void preventCommandAOF(client *c);

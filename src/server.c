@@ -86,10 +86,10 @@ struct redisServer server; /* server global state */
  * calls: total number of calls of this command.
  */
 struct redisCommand redisCommandTable[] = {
-    {"get",getCommand,2,1,1,1,0,0},
-    {"set",setCommand,-3,1,1,1,0,0},
-    {"del",delCommand,-2,1,-1,1,0,0},
-    {"info",infoCommand,-1,0,0,0,0,0}
+    {"get",getCommand,2,1,1,1},
+    {"set",setCommand,-3,1,1,1},
+    {"del",delCommand,-2,1,-1,1},
+    {"info",infoCommand,-1,0,0,0}
 };
 
 /*============================ Utility functions ============================ */
@@ -876,18 +876,6 @@ void populateCommandTable(void) {
     }
 }
 
-void resetCommandTableStats(void) {
-    int numcommands = sizeof(redisCommandTable)/sizeof(struct redisCommand);
-    int j;
-
-    for (j = 0; j < numcommands; j++) {
-        struct redisCommand *c = redisCommandTable+j;
-
-        c->microseconds = 0;
-        c->calls = 0;
-    }
-}
-
 /* ========================== Redis OP Array API ============================ */
 
 void redisOpArrayInit(redisOpArray *oa) {
@@ -952,27 +940,9 @@ struct redisCommand *lookupCommandOrOriginal(sds name) {
     return cmd;
 }
 
-/* Call() is the core of Redis execution of a command.
- *
- * The following flags can be passed:
- * CMD_CALL_NONE        No flags.
- * CMD_CALL_STATS       Populate command stats.
- * CMD_CALL_FULL        Alias for STATS.
- */
-void call(client *c, int flags) {
-    long long start, duration;
-
-    /* Call the command. */
-    start = ustime();
+/* Call() is the core of Redis execution of a command. */
+void call(client *c) {
     c->cmd->proc(c);
-    duration = ustime()-start;
-
-    /* Log the command into the Slow log if needed, and populate the
-     * per-command statistics that we show in INFO commandstats. */
-    if (flags & CMD_CALL_STATS) {
-        c->lastcmd->microseconds += duration;
-        c->lastcmd->calls++;
-    }
 }
 
 /* If this function gets called we already read a whole
@@ -1009,7 +979,7 @@ int processCommand(client *c) {
     }
 
     /* Exec the command */
-    call(c,CMD_CALL_FULL);
+    call(c);
 
     return C_OK;
 }
@@ -1231,22 +1201,6 @@ sds genRedisInfoString(char *section) {
         (float)self_ru.ru_utime.tv_sec+(float)self_ru.ru_utime.tv_usec/1000000,
         (float)c_ru.ru_stime.tv_sec+(float)c_ru.ru_stime.tv_usec/1000000,
         (float)c_ru.ru_utime.tv_sec+(float)c_ru.ru_utime.tv_usec/1000000);
-    }
-
-    /* cmdtime */
-    if (allsections || !strcasecmp(section,"commandstats")) {
-        if (sections++) info = sdscat(info,"\r\n");
-        info = sdscatprintf(info, "# Commandstats\r\n");
-        numcommands = sizeof(redisCommandTable)/sizeof(struct redisCommand);
-        for (j = 0; j < numcommands; j++) {
-            struct redisCommand *c = redisCommandTable+j;
-
-            if (!c->calls) continue;
-            info = sdscatprintf(info,
-                "cmdstat_%s:calls=%lld,usec=%lld,usec_per_call=%.2f\r\n",
-                c->name, c->calls, c->microseconds,
-                (c->calls == 0) ? 0 : ((float)c->microseconds/c->calls));
-        }
     }
 
     /* Key space */

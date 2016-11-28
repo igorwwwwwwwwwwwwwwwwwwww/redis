@@ -523,7 +523,6 @@ void updateCachedTime(void) {
  *
  * - Active expired keys collection (it is also performed in a lazy way on
  *   lookup).
- * - Software watchdog.
  * - Update some statistic.
  * - Incremental rehashing of the DBs hash tables.
  * - Triggering BGSAVE / AOF rewrite, and handling of terminated children.
@@ -541,10 +540,6 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     UNUSED(eventLoop);
     UNUSED(id);
     UNUSED(clientData);
-
-    /* Software watchdog: deliver the SIGALRM that will reach the signal
-     * handler if we don't return here fast enough. */
-    if (server.watchdog_period) watchdogScheduleSignal(server.watchdog_period);
 
     /* Update the time cache. */
     updateCachedTime();
@@ -738,7 +733,6 @@ void initServerConfig(void) {
     server.assert_file = "<no file>";
     server.assert_line = 0;
     server.bug_report_start = 0;
-    server.watchdog_period = 0;
 }
 
 extern char **environ;

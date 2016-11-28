@@ -463,12 +463,6 @@ void configSetCommand(client *c) {
          * but cap them to reasonable values. */
         if (server.hz < CONFIG_MIN_HZ) server.hz = CONFIG_MIN_HZ;
         if (server.hz > CONFIG_MAX_HZ) server.hz = CONFIG_MAX_HZ;
-    } config_set_numerical_field(
-      "watchdog-period",ll,0,LLONG_MAX) {
-        if (ll)
-            enableWatchdog(ll);
-        else
-            disableWatchdog();
 
     /* Enumeration fields.
      * config_set_enum_field(name,var,enum_var) */

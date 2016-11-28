@@ -352,20 +352,6 @@ typedef struct redisDb {
     long long avg_ttl;          /* Average TTL, just for stats */
 } redisDb;
 
-/* Client MULTI/EXEC state */
-typedef struct multiCmd {
-    robj **argv;
-    int argc;
-    struct redisCommand *cmd;
-} multiCmd;
-
-typedef struct multiState {
-    multiCmd *commands;     /* Array of MULTI commands */
-    int count;              /* Total number of MULTI commands */
-    int minreplicas;        /* MINREPLICAS for synchronous replication */
-    time_t minreplicas_timeout; /* MINREPLICAS timeout as unixtime. */
-} multiState;
-
 /* This structure holds the blocking operation state for a client.
  * The fields used depend on client->btype. */
 typedef struct blockingState {
@@ -585,7 +571,6 @@ struct redisServer {
     const char *assert_file;
     int assert_line;
     int bug_report_start; /* True if bug report header was already logged. */
-    int watchdog_period;  /* Software watchdog period in ms. 0 = off */
     /* System hardware info */
     size_t system_memory_size;  /* Total memory in system as reported by OS */
 };
@@ -894,9 +879,6 @@ void bugReportStart(void);
 void serverLogObjectDebugInfo(const robj *o);
 void sigsegvHandler(int sig, siginfo_t *info, void *secret);
 sds genRedisInfoString(char *section);
-void enableWatchdog(int period);
-void disableWatchdog(void);
-void watchdogScheduleSignal(int period);
 void serverLogHexDump(int level, char *descr, void *value, size_t len);
 
 #define redisDebug(fmt, ...) \

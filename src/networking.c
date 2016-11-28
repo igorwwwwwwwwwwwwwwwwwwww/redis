@@ -580,7 +580,6 @@ static void acceptCommonHandler(int fd, int flags, char *ip) {
         if (write(c->fd,err,strlen(err)) == -1) {
             /* Nothing to do, Just to avoid the warning... */
         }
-        server.stat_rejected_conn++;
         freeClient(c);
         return;
     }
@@ -619,13 +618,11 @@ static void acceptCommonHandler(int fd, int flags, char *ip) {
             if (write(c->fd,err,strlen(err)) == -1) {
                 /* Nothing to do, Just to avoid the warning... */
             }
-            server.stat_rejected_conn++;
             freeClient(c);
             return;
         }
     }
 
-    server.stat_numconnections++;
     c->flags |= flags;
 }
 
@@ -818,7 +815,6 @@ int writeToClient(int fd, client *c, int handler_installed) {
          * other clients as well, even if a very large request comes from
          * super fast link that is always able to accept data (in real world
          * scenario think about 'KEYS *' against the loopback interface). */
-        server.stat_net_output_bytes += totwritten;
         if (totwritten > NET_MAX_WRITES_PER_EVENT) break;
     }
     if (nwritten == -1) {
@@ -1211,7 +1207,6 @@ void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask) {
 
     sdsIncrLen(c->querybuf,nread);
     c->lastinteraction = server.unixtime;
-    server.stat_net_input_bytes += nread;
     if (sdslen(c->querybuf) > server.client_max_querybuf_len) {
         sds ci = catClientInfoString(sdsempty(),c), bytes = sdsempty();
 

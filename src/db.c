@@ -63,12 +63,7 @@ robj *lookupKey(redisDb *db, robj *key) {
  * the object linked to the key, but only for read only operations. */
 robj *lookupKeyReadWithFlags(redisDb *db, robj *key) {
     robj *val;
-
     val = lookupKey(db,key);
-    if (val == NULL)
-        server.stat_keyspace_misses++;
-    else
-        server.stat_keyspace_hits++;
     return val;
 }
 

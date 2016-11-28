@@ -190,18 +190,6 @@ mstime_t mstime(void) {
     return ustime()/1000;
 }
 
-/* After an RDB dump or AOF rewrite we exit from children using _exit() instead of
- * exit(), because the latter may interact with the same file objects used by
- * the parent process. However if we are testing the coverage normal exit() is
- * used in order to obtain the right coverage information. */
-void exitFromChild(int retcode) {
-#ifdef COVERAGE_TEST
-    exit(retcode);
-#else
-    _exit(retcode);
-#endif
-}
-
 /*====================== Hash table type implementation  ==================== */
 
 /* This is a hash table type that uses the SDS dynamic strings library as
@@ -359,62 +347,6 @@ dictType commandTableDictType = {
     NULL                        /* val destructor */
 };
 
-/* Hash type hash table (note that small hashes are represented with ziplists) */
-dictType hashDictType = {
-    dictSdsHash,                /* hash function */
-    NULL,                       /* key dup */
-    NULL,                       /* val dup */
-    dictSdsKeyCompare,          /* key compare */
-    dictSdsDestructor,          /* key destructor */
-    dictSdsDestructor           /* val destructor */
-};
-
-/* Keylist hash table type has unencoded redis objects as keys and
- * lists as values. It's used for blocking operations (BLPOP) and to
- * map swapped keys to a list of clients waiting for this keys to be loaded. */
-dictType keylistDictType = {
-    dictObjHash,                /* hash function */
-    NULL,                       /* key dup */
-    NULL,                       /* val dup */
-    dictObjKeyCompare,          /* key compare */
-    dictObjectDestructor,       /* key destructor */
-    dictListDestructor          /* val destructor */
-};
-
-/* Cluster re-addition blacklist. This maps node IDs to the time
- * we can re-add this node. The goal is to avoid readding a removed
- * node for some time. */
-dictType modulesDictType = {
-    dictSdsCaseHash,            /* hash function */
-    NULL,                       /* key dup */
-    NULL,                       /* val dup */
-    dictSdsKeyCaseCompare,      /* key compare */
-    dictSdsDestructor,          /* key destructor */
-    NULL                        /* val destructor */
-};
-
-/* Migrate cache dict type. */
-dictType migrateCacheDictType = {
-    dictSdsHash,                /* hash function */
-    NULL,                       /* key dup */
-    NULL,                       /* val dup */
-    dictSdsKeyCompare,          /* key compare */
-    dictSdsDestructor,          /* key destructor */
-    NULL                        /* val destructor */
-};
-
-/* Replication cached script dict (server.repl_scriptcache_dict).
- * Keys are sds SHA1 strings, while values are not used at all in the current
- * implementation. */
-dictType replScriptCacheDictType = {
-    dictSdsCaseHash,            /* hash function */
-    NULL,                       /* key dup */
-    NULL,                       /* val dup */
-    dictSdsKeyCaseCompare,      /* key compare */
-    dictSdsDestructor,          /* key destructor */
-    NULL                        /* val destructor */
-};
-
 int htNeedsResize(dict *dict) {
     long long size, used;
 
@@ -458,33 +390,6 @@ void updateDictResizePolicy(void) {
 }
 
 /* ======================= Cron: called every 100 ms ======================== */
-
-/* Add a sample to the operations per second array of samples. */
-void trackInstantaneousMetric(int metric, long long current_reading) {
-    long long t = mstime() - server.inst_metric[metric].last_sample_time;
-    long long ops = current_reading -
-                    server.inst_metric[metric].last_sample_count;
-    long long ops_sec;
-
-    ops_sec = t > 0 ? (ops*1000/t) : 0;
-
-    server.inst_metric[metric].samples[server.inst_metric[metric].idx] =
-        ops_sec;
-    server.inst_metric[metric].idx++;
-    server.inst_metric[metric].idx %= STATS_METRIC_SAMPLES;
-    server.inst_metric[metric].last_sample_time = mstime();
-    server.inst_metric[metric].last_sample_count = current_reading;
-}
-
-/* Return the mean of all the samples. */
-long long getInstantaneousMetric(int metric) {
-    int j;
-    long long sum = 0;
-
-    for (j = 0; j < STATS_METRIC_SAMPLES; j++)
-        sum += server.inst_metric[metric].samples[j];
-    return sum / STATS_METRIC_SAMPLES;
-}
 
 /* Check for timeouts. Returns non-zero if the client was terminated.
  * The function gets the current time in milliseconds as argument since
@@ -644,21 +549,6 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     /* Update the time cache. */
     updateCachedTime();
 
-    run_with_period(100) {
-        trackInstantaneousMetric(STATS_METRIC_COMMAND,server.stat_numcommands);
-        trackInstantaneousMetric(STATS_METRIC_NET_INPUT,
-                server.stat_net_input_bytes);
-        trackInstantaneousMetric(STATS_METRIC_NET_OUTPUT,
-                server.stat_net_output_bytes);
-    }
-
-    /* Record the max memory used since the server was started. */
-    if (zmalloc_used_memory() > server.stat_peak_memory)
-        server.stat_peak_memory = zmalloc_used_memory();
-
-    /* Sample the RSS here since this is a relatively slow call. */
-    server.resident_set_size = zmalloc_get_rss();
-
     /* We received a SIGTERM, shutting down here in a safe way, as it is
      * not ok doing so inside the signal handler. */
     if (server.shutdown_asap) {
@@ -771,15 +661,7 @@ void createSharedObjects(void) {
     }
     shared.messagebulk = createStringObject("$7\r\nmessage\r\n",13);
     shared.pmessagebulk = createStringObject("$8\r\npmessage\r\n",14);
-    shared.subscribebulk = createStringObject("$9\r\nsubscribe\r\n",15);
-    shared.unsubscribebulk = createStringObject("$11\r\nunsubscribe\r\n",18);
-    shared.psubscribebulk = createStringObject("$10\r\npsubscribe\r\n",17);
-    shared.punsubscribebulk = createStringObject("$12\r\npunsubscribe\r\n",19);
     shared.del = createStringObject("DEL",3);
-    shared.unlink = createStringObject("UNLINK",6);
-    shared.rpop = createStringObject("RPOP",4);
-    shared.lpop = createStringObject("LPOP",4);
-    shared.lpush = createStringObject("LPUSH",5);
     for (j = 0; j < OBJ_SHARED_INTEGERS; j++) {
         shared.integers[j] =
             makeObjectShared(createObject(OBJ_STRING,(void*)(long)j));
@@ -849,7 +731,6 @@ void initServerConfig(void) {
      * initial configuration, since command names may be changed via
      * redis.conf using the rename-command directive. */
     server.commands = dictCreate(&commandTableDictType,NULL);
-    server.orig_commands = dictCreate(&commandTableDictType,NULL);
     populateCommandTable();
     server.delCommand = lookupCommandByCString("del");
 
@@ -1077,31 +958,6 @@ int listenToPort(int port, int *fds, int *count) {
     return C_OK;
 }
 
-/* Resets the stats that we expose via INFO or other means that we want
- * to reset via CONFIG RESETSTAT. The function is also used in order to
- * initialize these fields in initServer() at server startup. */
-void resetServerStats(void) {
-    int j;
-
-    server.stat_numcommands = 0;
-    server.stat_numconnections = 0;
-    server.stat_expiredkeys = 0;
-    server.stat_keyspace_misses = 0;
-    server.stat_keyspace_hits = 0;
-    server.stat_fork_time = 0;
-    server.stat_fork_rate = 0;
-    server.stat_rejected_conn = 0;
-    for (j = 0; j < STATS_METRIC_COUNT; j++) {
-        server.inst_metric[j].idx = 0;
-        server.inst_metric[j].last_sample_time = mstime();
-        server.inst_metric[j].last_sample_count = 0;
-        memset(server.inst_metric[j].samples,0,
-            sizeof(server.inst_metric[j].samples));
-    }
-    server.stat_net_input_bytes = 0;
-    server.stat_net_output_bytes = 0;
-}
-
 void initServer(void) {
     int j;
 
@@ -1160,11 +1016,6 @@ void initServer(void) {
         server.db[j].avg_ttl = 0;
     }
     server.cronloops = 0;
-    resetServerStats();
-    /* A few stats we don't want to reset: server startup time, and peak mem. */
-    server.stat_starttime = time(NULL);
-    server.stat_peak_memory = 0;
-    server.resident_set_size = 0;
     updateCachedTime();
 
     /* Create the timer callback, this is our way to process many background
@@ -1199,13 +1050,7 @@ void populateCommandTable(void) {
 
     for (j = 0; j < numcommands; j++) {
         struct redisCommand *c = redisCommandTable+j;
-        int retval1, retval2;
-
-        retval1 = dictAdd(server.commands, sdsnew(c->name), c);
-        /* Populate an additional dictionary that will be unaffected
-         * by rename-command statements in redis.conf. */
-        retval2 = dictAdd(server.orig_commands, sdsnew(c->name), c);
-        serverAssert(retval1 == DICT_OK && retval2 == DICT_OK);
+        dictAdd(server.commands, sdsnew(c->name), c);
     }
 }
 
@@ -1282,8 +1127,6 @@ struct redisCommand *lookupCommandByCString(char *s) {
  * correctly even if the command was renamed. */
 struct redisCommand *lookupCommandOrOriginal(sds name) {
     struct redisCommand *cmd = dictFetchValue(server.commands, name);
-
-    if (!cmd) cmd = dictFetchValue(server.orig_commands,name);
     return cmd;
 }
 
@@ -1308,8 +1151,6 @@ void call(client *c, int flags) {
         c->lastcmd->microseconds += duration;
         c->lastcmd->calls++;
     }
-
-    server.stat_numcommands++;
 }
 
 /* If this function gets called we already read a whole
@@ -1481,7 +1322,6 @@ void bytesToHuman(char *s, unsigned long long n) {
  * on memory corruption problems. */
 sds genRedisInfoString(char *section) {
     sds info = sdsempty();
-    time_t uptime = server.unixtime-server.stat_starttime;
     int j, numcommands;
     struct rusage self_ru, c_ru;
     unsigned long lol, bib;
@@ -1526,8 +1366,6 @@ sds genRedisInfoString(char *section) {
             "process_id:%ld\r\n"
             "run_id:%s\r\n"
             "tcp_port:%d\r\n"
-            "uptime_in_seconds:%jd\r\n"
-            "uptime_in_days:%jd\r\n"
             "hz:%d\r\n"
             "executable:%s\r\n"
             "config_file:%s\r\n",
@@ -1547,8 +1385,6 @@ sds genRedisInfoString(char *section) {
             (long) getpid(),
             server.runid,
             server.port,
-            (intmax_t)uptime,
-            (intmax_t)(uptime/(3600*24)),
             server.hz,
             server.executable ? server.executable : "",
             server.configfile ? server.configfile : "");
@@ -1564,94 +1400,6 @@ sds genRedisInfoString(char *section) {
             "client_biggest_input_buf:%lu\r\n",
             listLength(server.clients),
             lol, bib);
-    }
-
-    /* Memory */
-    if (allsections || defsections || !strcasecmp(section,"memory")) {
-        char hmem[64];
-        char peak_hmem[64];
-        char total_system_hmem[64];
-        char used_memory_rss_hmem[64];
-        size_t zmalloc_used = zmalloc_used_memory();
-        size_t total_system_mem = server.system_memory_size;
-        struct redisMemOverhead *mh = getMemoryOverheadData();
-
-        /* Peak memory is updated from time to time by serverCron() so it
-         * may happen that the instantaneous value is slightly bigger than
-         * the peak value. This may confuse users, so we update the peak
-         * if found smaller than the current memory usage. */
-        if (zmalloc_used > server.stat_peak_memory)
-            server.stat_peak_memory = zmalloc_used;
-
-        bytesToHuman(hmem,zmalloc_used);
-        bytesToHuman(peak_hmem,server.stat_peak_memory);
-        bytesToHuman(total_system_hmem,total_system_mem);
-        bytesToHuman(used_memory_rss_hmem,server.resident_set_size);
-
-        if (sections++) info = sdscat(info,"\r\n");
-        info = sdscatprintf(info,
-            "# Memory\r\n"
-            "used_memory:%zu\r\n"
-            "used_memory_human:%s\r\n"
-            "used_memory_rss:%zu\r\n"
-            "used_memory_rss_human:%s\r\n"
-            "used_memory_peak:%zu\r\n"
-            "used_memory_peak_human:%s\r\n"
-            "used_memory_peak_perc:%.2f%%\r\n"
-            "used_memory_overhead:%zu\r\n"
-            "used_memory_startup:%zu\r\n"
-            "used_memory_dataset:%zu\r\n"
-            "used_memory_dataset_perc:%.2f%%\r\n"
-            "total_system_memory:%lu\r\n"
-            "total_system_memory_human:%s\r\n"
-            "mem_fragmentation_ratio:%.2f\r\n"
-            "mem_allocator:%s\r\n",
-            zmalloc_used,
-            hmem,
-            server.resident_set_size,
-            used_memory_rss_hmem,
-            server.stat_peak_memory,
-            peak_hmem,
-            mh->peak_perc,
-            mh->overhead_total,
-            mh->startup_allocated,
-            mh->dataset,
-            mh->dataset_perc,
-            (unsigned long)total_system_mem,
-            total_system_hmem,
-            mh->fragmentation,
-            ZMALLOC_LIB
-        );
-        freeMemoryOverheadData(mh);
-    }
-
-    /* Stats */
-    if (allsections || defsections || !strcasecmp(section,"stats")) {
-        if (sections++) info = sdscat(info,"\r\n");
-        info = sdscatprintf(info,
-            "# Stats\r\n"
-            "total_connections_received:%lld\r\n"
-            "total_commands_processed:%lld\r\n"
-            "instantaneous_ops_per_sec:%lld\r\n"
-            "total_net_input_bytes:%lld\r\n"
-            "total_net_output_bytes:%lld\r\n"
-            "instantaneous_input_kbps:%.2f\r\n"
-            "instantaneous_output_kbps:%.2f\r\n"
-            "rejected_connections:%lld\r\n"
-            "keyspace_hits:%lld\r\n"
-            "keyspace_misses:%lld\r\n"
-            "latest_fork_usec:%lld\r\n",
-            server.stat_numconnections,
-            server.stat_numcommands,
-            getInstantaneousMetric(STATS_METRIC_COMMAND),
-            server.stat_net_input_bytes,
-            server.stat_net_output_bytes,
-            (float)getInstantaneousMetric(STATS_METRIC_NET_INPUT)/1024,
-            (float)getInstantaneousMetric(STATS_METRIC_NET_OUTPUT)/1024,
-            server.stat_rejected_conn,
-            server.stat_keyspace_hits,
-            server.stat_keyspace_misses,
-            server.stat_fork_time);
     }
 
     /* CPU */

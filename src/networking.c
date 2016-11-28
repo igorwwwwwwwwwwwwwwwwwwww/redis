@@ -592,25 +592,6 @@ void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
     }
 }
 
-void acceptUnixHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
-    int cfd, max = MAX_ACCEPTS_PER_CALL;
-    UNUSED(el);
-    UNUSED(mask);
-    UNUSED(privdata);
-
-    while(max--) {
-        cfd = anetUnixAccept(server.neterr, fd);
-        if (cfd == ANET_ERR) {
-            if (errno != EWOULDBLOCK)
-                serverLog(LL_WARNING,
-                    "Accepting client connection: %s", server.neterr);
-            return;
-        }
-        serverLog(LL_VERBOSE,"Accepted connection to %s", server.unixsocket);
-        acceptCommonHandler(cfd,CLIENT_UNIX_SOCKET);
-    }
-}
-
 static void freeClientArgv(client *c) {
     int j;
     for (j = 0; j < c->argc; j++)
@@ -1166,7 +1147,6 @@ void getClientsMaxBuffers(unsigned long *longest_output_list,
 /* A Redis "Peer ID" is a colon separated ip:port pair.
  * For IPv4 it's in the form x.y.z.k:port, example: "127.0.0.1:1234".
  * For IPv6 addresses we use [] around the IP part, like in "[::1]:1234".
- * For Unix sockets we use path:0, like in "/tmp/redis:0".
  *
  * A Peer ID always fits inside a buffer of NET_PEER_ID_LEN bytes, including
  * the null term.
@@ -1176,13 +1156,8 @@ void getClientsMaxBuffers(unsigned long *longest_output_list,
  * anyway (see anetPeerToString implementation for more info). */
 void genClientPeerId(client *client, char *peerid,
                             size_t peerid_len) {
-    if (client->flags & CLIENT_UNIX_SOCKET) {
-        /* Unix socket client. */
-        snprintf(peerid,peerid_len,"%s:0",server.unixsocket);
-    } else {
-        /* TCP client. */
-        anetFormatPeer(client->fd,peerid,peerid_len);
-    }
+    /* TCP client. */
+    anetFormatPeer(client->fd,peerid,peerid_len);
 }
 
 /* This function returns the client peer id, by creating and caching it
@@ -1209,7 +1184,6 @@ sds catClientInfoString(sds s, client *client) {
     if (client->flags & CLIENT_CLOSE_AFTER_REPLY) *p++ = 'c';
     if (client->flags & CLIENT_UNBLOCKED) *p++ = 'u';
     if (client->flags & CLIENT_CLOSE_ASAP) *p++ = 'A';
-    if (client->flags & CLIENT_UNIX_SOCKET) *p++ = 'U';
     if (p == flags) *p++ = 'N';
     *p++ = '\0';
 

@@ -132,14 +132,6 @@ void loadServerConfigFromString(char *config) {
             for (j = 0; j < addresses; j++)
                 server.bindaddr[j] = zstrdup(argv[j+1]);
             server.bindaddr_count = addresses;
-        } else if (!strcasecmp(argv[0],"unixsocket") && argc == 2) {
-            server.unixsocket = zstrdup(argv[1]);
-        } else if (!strcasecmp(argv[0],"unixsocketperm") && argc == 2) {
-            errno = 0;
-            server.unixsocketperm = (mode_t)strtol(argv[1], NULL, 8);
-            if (errno || server.unixsocketperm > 0777) {
-                err = "Invalid socket file permissions"; goto loaderr;
-            }
         } else if (!strcasecmp(argv[0],"databases") && argc == 2) {
             server.dbnum = atoi(argv[1]);
             if (server.dbnum < 1) {
@@ -244,7 +236,6 @@ void loadServerConfig(char *filename, char *options) {
 void configSetCommand(client *c) {
     robj *o;
     long long ll;
-    int err;
     serverAssertWithInfo(c,c->argv[2],sdsEncodedObject(c->argv[2]));
     serverAssertWithInfo(c,c->argv[3],sdsEncodedObject(c->argv[3]));
     o = c->argv[3];

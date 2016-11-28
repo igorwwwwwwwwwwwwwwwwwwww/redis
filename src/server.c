@@ -595,7 +595,6 @@ void initServerConfig(void) {
     server.unixsocket = NULL;
     server.unixsocketperm = CONFIG_DEFAULT_UNIX_SOCKET_PERM;
     server.ipfd_count = 0;
-    server.sofd = -1;
     server.dbnum = CONFIG_DEFAULT_DBNUM;
     server.maxidletime = CONFIG_DEFAULT_CLIENT_TIMEOUT;
     server.client_max_querybuf_len = PROTO_MAX_QUERYBUF_LEN;
@@ -724,20 +723,8 @@ void initServer(void) {
         listenToPort(server.port,server.ipfd,&server.ipfd_count) == C_ERR)
         exit(1);
 
-    /* Open the listening Unix domain socket. */
-    if (server.unixsocket != NULL) {
-        unlink(server.unixsocket); /* don't care if this fails */
-        server.sofd = anetUnixServer(server.neterr,server.unixsocket,
-            server.unixsocketperm, CONFIG_DEFAULT_TCP_BACKLOG);
-        if (server.sofd == ANET_ERR) {
-            serverLog(LL_WARNING, "Opening Unix socket: %s", server.neterr);
-            exit(1);
-        }
-        anetNonBlock(NULL,server.sofd);
-    }
-
     /* Abort if there are no listening sockets at all. */
-    if (server.ipfd_count == 0 && server.sofd < 0) {
+    if (server.ipfd_count == 0) {
         serverLog(LL_WARNING, "Configured to not listen anywhere, exiting.");
         exit(1);
     }
@@ -759,8 +746,7 @@ void initServer(void) {
         exit(1);
     }
 
-    /* Create an event handler for accepting new connections in TCP and Unix
-     * domain sockets. */
+    /* Create an event handler for accepting new connections in TCP sockets. */
     for (j = 0; j < server.ipfd_count; j++) {
         if (aeCreateFileEvent(server.el, server.ipfd[j], AE_READABLE,
             acceptTcpHandler,NULL) == AE_ERR)
@@ -769,8 +755,6 @@ void initServer(void) {
                     "Unrecoverable error creating server.ipfd file event.");
             }
     }
-    if (server.sofd > 0 && aeCreateFileEvent(server.el,server.sofd,AE_READABLE,
-        acceptUnixHandler,NULL) == AE_ERR) serverPanic("Unrecoverable error creating server.sofd file event.");
 }
 
 /* Populates the Redis Command Table starting from the hard coded list
@@ -895,24 +879,18 @@ int processCommand(client *c) {
 
 /*================================== Shutdown =============================== */
 
-/* Close listening sockets. Also unlink the unix domain socket if
- * unlink_unix_socket is non-zero. */
-void closeListeningSockets(int unlink_unix_socket) {
+/* Close listening sockets. */
+void closeListeningSockets() {
     int j;
 
     for (j = 0; j < server.ipfd_count; j++) close(server.ipfd[j]);
-    if (server.sofd != -1) close(server.sofd);
-    if (unlink_unix_socket && server.unixsocket) {
-        serverLog(LL_NOTICE,"Removing the unix socket file.");
-        unlink(server.unixsocket); /* don't care if this fails */
-    }
 }
 
 int prepareForShutdown() {
     serverLog(LL_WARNING,"User requested shutdown...");
 
     /* Close the listening sockets. Apparently this allows faster restarts. */
-    closeListeningSockets(1);
+    closeListeningSockets();
     serverLog(LL_WARNING,"%s is now ready to exit, bye bye...",
         "Redis");
     return C_OK;
@@ -1346,8 +1324,6 @@ int main(int argc, char **argv) {
 #endif
     if (server.ipfd_count > 0)
         serverLog(LL_NOTICE,"The server is now ready to accept connections on port %d", server.port);
-    if (server.sofd > 0)
-        serverLog(LL_NOTICE,"The server is now ready to accept connections at %s", server.unixsocket);
 
     aeSetBeforeSleepProc(server.el,beforeSleep);
     aeMain(server.el);

@@ -470,7 +470,6 @@ struct redisServer {
     mode_t unixsocketperm;      /* UNIX socket permission */
     int ipfd[CONFIG_BINDADDR_MAX]; /* TCP socket file descriptors */
     int ipfd_count;             /* Used slots in ipfd[] */
-    int sofd;                   /* Unix socket file descriptor */
     int cfd[CONFIG_BINDADDR_MAX];/* Cluster bus listening socket */
     int cfd_count;              /* Used slots in cfd[] */
     list *clients;              /* List of active clients */
@@ -553,7 +552,6 @@ void setDeferredMultiBulkLength(client *c, void *node, long length);
 void processInputBuffer(client *c);
 void acceptHandler(aeEventLoop *el, int fd, void *privdata, int mask);
 void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask);
-void acceptUnixHandler(aeEventLoop *el, int fd, void *privdata, int mask);
 void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask);
 void addReplyString(client *c, const char *s, size_t len);
 void addReplyBulk(client *c, robj *obj);
@@ -719,7 +717,7 @@ void updateDictResizePolicy(void);
 int htNeedsResize(dict *dict);
 void populateCommandTable(void);
 void resetCommandTableStats(void);
-void closeListeningSockets(int unlink_unix_socket);
+void closeListeningSockets();
 void updateCachedTime(void);
 const char *evictPolicyToString(void);
 struct redisMemOverhead *getMemoryOverheadData(void);
